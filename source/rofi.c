@@ -781,9 +781,9 @@ int main(int argc, char *argv[]) {
   // Version
   if (find_arg("-v") >= 0 || find_arg("-version") >= 0) {
 #ifdef GIT_VERSION
-    g_print("Version: " GIT_VERSION "\n");
+    g_print("Version(!): " GIT_VERSION "\n");
 #else
-    g_print("Version: " VERSION "\n");
+    g_print("Version(!): " VERSION "\n");
 #endif
     return EXIT_SUCCESS;
   }
