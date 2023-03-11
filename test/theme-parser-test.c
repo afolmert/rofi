@@ -47,14 +47,22 @@
 
 #define REAL_COMPARE_DELTA 0.001
 
-uint32_t rofi_icon_fetcher_query(const char *name, const int size) { return 0; }
+uint32_t rofi_icon_fetcher_query(G_GNUC_UNUSED const char *name,
+                                 G_GNUC_UNUSED const int size) {
+  return 0;
+}
 void rofi_clear_error_messages(void) {}
-uint32_t rofi_icon_fetcher_query_advanced(const char *name, const int wsize,
-                                          const int hsize) {
+void rofi_clear_warning_messages(void) {}
+uint32_t
+rofi_icon_fetcher_query_advanced(G_GNUC_UNUSED const char *name,
+                                 G_GNUC_UNUSED G_GNUC_UNUSED const int wsize,
+                                 G_GNUC_UNUSED const int hsize) {
   return 0;
 }
 
-cairo_surface_t *rofi_icon_fetcher_get(const uint32_t uid) { return NULL; }
+cairo_surface_t *rofi_icon_fetcher_get(G_GNUC_UNUSED const uint32_t uid) {
+  return NULL;
+}
 
 int rofi_view_error_dialog(const char *msg, G_GNUC_UNUSED int markup) {
   fputs(msg, stderr);
@@ -97,10 +105,17 @@ void display_startup_notification(
 
 gboolean error = FALSE;
 GString *error_msg = NULL;
+gboolean warning = FALSE;
+GString *warning_msg = NULL;
 void rofi_add_error_message(GString *msg) {
   ck_assert_ptr_null(error_msg);
   error_msg = msg;
   error = TRUE;
+}
+void rofi_add_warning_message(GString *msg) {
+  ck_assert_ptr_null(warning_msg);
+  warning_msg = msg;
+  warning = TRUE;
 }
 
 static void theme_parser_setup(void) { error = 0; }
@@ -1315,11 +1330,11 @@ START_TEST(test_import_error) {
 
   const char *errstr = "Failed to open theme: <i>/non-existing-file.rasi</i>\n"
                        "Error: <b>No such file or directory</b>";
-  ck_assert_int_eq(error, 1);
-  ck_assert_str_eq(error_msg->str, errstr);
-  g_string_free(error_msg, TRUE);
-  error_msg = NULL;
-  error = 0;
+  ck_assert_int_eq(warning, 1);
+  ck_assert_str_eq(warning_msg->str, errstr);
+  g_string_free(warning_msg, TRUE);
+  warning_msg = NULL;
+  warning = 0;
 }
 END_TEST
 START_TEST(test_prepare_array) {
@@ -1441,7 +1456,7 @@ START_TEST(test_prepare_math_modulo) {
   widget wid;
   wid.name = "window";
   wid.state = "";
-  rofi_theme_parse_string("window  { width: calc( 255 % 4 % 3 % );}");
+  rofi_theme_parse_string("window  { width: calc( 255 modulo 4 modulo 5 );}");
   ck_assert_ptr_nonnull(rofi_theme);
   // ck_assert_ptr_null ( rofi_theme->widgets );
   ck_assert_ptr_null(rofi_theme->properties);
@@ -1482,6 +1497,143 @@ START_TEST(test_prepare_math_max) {
   RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
   int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
   ck_assert_int_eq(dist, 256);
+}
+END_TEST
+
+START_TEST(test_prepare_math_failure) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc( 1/2 * 500 );}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, 250);
+}
+END_TEST
+
+START_TEST(test_prepare_math_failure2) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc( -16/2 * 1.5 );}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, -12);
+}
+END_TEST
+START_TEST(test_prepare_math_failure3) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc(10+3);}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, 13);
+}
+END_TEST
+START_TEST(test_prepare_math_failure4) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc(10.0+3.2);}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, 13);
+}
+END_TEST
+START_TEST(test_prepare_math_failure5) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc(10-3);}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, 7);
+}
+END_TEST
+START_TEST(test_prepare_math_failure6) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc(10.0-3.2);}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, 6);
+}
+END_TEST
+START_TEST(test_prepare_math_failure7) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc(-10--3);}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, -7);
+}
+END_TEST
+START_TEST(test_prepare_math_failure8) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: calc(-10.0--3.2);}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, -6);
+}
+END_TEST
+START_TEST(test_prepare_math_failure9) {
+  widget wid;
+  wid.name = "window";
+  wid.state = "";
+  rofi_theme_parse_string("window  { width: -128;}");
+  ck_assert_ptr_nonnull(rofi_theme);
+  // ck_assert_ptr_null ( rofi_theme->widgets );
+  ck_assert_ptr_null(rofi_theme->properties);
+  ck_assert_ptr_null(rofi_theme->parent);
+  ck_assert_str_eq(rofi_theme->name, "Root");
+  RofiDistance l = rofi_theme_get_distance(&wid, "width", 0);
+  int dist = distance_get_pixel(l, ROFI_ORIENTATION_HORIZONTAL);
+  ck_assert_int_eq(dist, -128);
 }
 END_TEST
 START_TEST(test_prepare_default) {
@@ -1724,6 +1876,15 @@ static Suite *theme_parser_suite(void) {
     tcase_add_test(tc_prepare_math, test_prepare_math_round);
     tcase_add_test(tc_prepare_math, test_prepare_math_min);
     tcase_add_test(tc_prepare_math, test_prepare_math_max);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure2);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure3);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure4);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure5);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure6);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure7);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure8);
+    tcase_add_test(tc_prepare_math, test_prepare_math_failure9);
     suite_add_tcase(s, tc_prepare_math);
   }
   return s;

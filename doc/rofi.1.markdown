@@ -11,9 +11,9 @@
 
 ## DESCRIPTION
 
-**rofi** is an X11 pop-up window switcher, run dialog, dmenu replacement, and more. It focuses on
-being fast to use and have minimal distraction. It supports keyboard and mouse navigation, type to
-filter, tokenized search and more.
+**rofi** is an X11 pop-up window switcher, run dialog, dmenu replacement, and
+more. It focuses on being fast to use and have minimal distraction. It supports
+keyboard and mouse navigation, type to filter, tokenized search and more.
 
 
 ## USAGE
@@ -34,7 +34,7 @@ To show the `drun` dialog:
     rofi -show drun
 ```
 
-A very useful setup in minimalistic window managers is to combine `drun`, `run`
+A useful setup in minimalistic window managers is to combine `drun`, `run`
 with `window` mode:
 
 ```bash
@@ -48,7 +48,8 @@ running firefox, or launch it when it is not running.
 
 ### Emulating dmenu
 
-**rofi** can emulate **dmenu(1)** (a dynamic menu for X11) when launched with the `-dmenu` flag.
+**rofi** can emulate **dmenu(1)** (a dynamic menu for X11) when launched with
+the `-dmenu` flag.
 
 For more information see **rofi-dmenu(5)**.
 
@@ -122,8 +123,8 @@ Below is a list of the most important options:
 
 `-help`
 
-The help option shows the full list of command-line options and the current set values.
-These include dynamic (run-time generated) options.
+The help option shows the full list of command-line options and the current set
+values. These include dynamic (run-time generated) options.
 
 `-version`
 
@@ -141,6 +142,11 @@ Dump the current active theme, in rasi format, to stdout and exit.
 `-rasi-validate` *filename*
 
 Try to parse the file and return 0 when successful, non-zero when failed.
+
+`-list-keybindings`
+
+List all known keybindings without trying to parse them. This can be used to
+look for duplicate bindings.
 
 `-threads` *num*
 
@@ -172,9 +178,10 @@ See the **rofi-dmenu(5)** manpage for more information.
 
 `-show` *mode*
 
-Open **rofi** in a certain mode. Available modes are `window`, `run`, `drun`, `ssh`, `combi`.
-The special argument `keys` can be used to open a searchable list of supported key bindings
-(see *KEY BINDINGS*)
+Open **rofi** in a certain mode. Available modes are `window`, `run`, `drun`,
+`ssh`, `combi`. The special argument `keys` can be used to open a searchable
+list of supported key bindings
+(see the **rofi-keys(5)** manpage)
 
 To show the run-dialog:
 
@@ -191,7 +198,8 @@ To only show the `run` and `ssh` launcher:
 
     rofi -modes "run,ssh" -show run
 
-Custom modes can be added using the internal `script` mode. Each such mode has two parameters:
+Custom modes can be added using the internal `script` mode. Each such mode has
+two parameters:
 
     <name>:<script>
 
@@ -199,8 +207,8 @@ Example: Have a mode called 'Workspaces' using the `i3_switch_workspaces.sh` scr
 
     rofi -modes "window,run,ssh,Workspaces:i3_switch_workspaces.sh" -show Workspaces
 
-Notes: The i3 window manager dislikes commas in the command when specifying an exec command.
-For that case, `#` can be used as a separator.
+Notes: The i3 window manager dislikes commas in the command when specifying an
+exec command. For that case, `#` can be used as a separator.
 
 **TIP**: The name is allowed to contain spaces:
 
@@ -258,10 +266,6 @@ Specify icon theme to be used.
 If not specified default theme from DE is used, *Adwaita* and *gnome* themes act as
 fallback themes.
 
-`-application-fallback-icon`
-
-Specify an icon to be used when the application icon in run/drun are not yet loaded or is not available.
-
 `-markup`
 
 Use Pango markup to format output wherever possible.
@@ -276,9 +280,30 @@ Make rofi steal focus on launch and restore close to window that held it when la
 
 `-refilter-timeout-limit`
 
-The limit of elements that is used to switch from instant to delayed filter mode.
+The time (in ms) boundary filter may take before switch from instant to delayed filter mode.
 
-  Default: 8192
+  Default: 300
+
+A fallback icon can be specified for each mode:
+
+```css
+configuration {
+    <mode>{
+      fallback-icon: "<icon name>";
+    }
+}
+```
+Example
+
+```css
+configuration {
+    run,drun {
+      fallback-icon: "application-x-addon";
+    }
+}
+```
+
+
 
 ### Matching
 
@@ -518,6 +543,12 @@ See *PATTERN*.
 
 Default: *{cmd}*
 
+Example to run applications in a dedicated cgroup with systemd. Requires a shell to escape and interpolate the unit name correctly.
+
+```
+"bash -c 'systemd-run --user --unit=app-rofi-\$(systemd-escape {cmd})-\$RANDOM {cmd}'"
+```
+
 `-run-shell-command` *cmd*
 
 Set command to execute when running an application in a shell.
@@ -547,7 +578,7 @@ Format what is being displayed for windows.
  * **r**: role
  * **c**: class
 
-*len*: maximum field length (0 for auto-size). If length and window *width* are negative, field length is *width - len*.  
+*len*: maximum field length (0 for auto-size). If length is negative, the entry will be unchanged.
 If length is positive, the entry will be truncated or padded to fill that length.
 
 
@@ -575,6 +606,29 @@ configuration {
   }
 }
 ```
+You can hide the currently active window with the 'hide-active-window' setting:
+
+```css
+configuration {
+  window {
+      hide-active-window: true;
+  }
+}
+```
+
+or pass `-window-hide-active-window true` on command line.
+
+You can prefer the icon theme above the window set icon with the 'prefer-icon-theme' setting:
+
+```css
+configuration {
+  window {
+      prefer-icon-theme: true;
+  }
+}
+```
+
+or pass `-window-prefer-icon-theme true` on command line.
 
 ### Combi settings
 
@@ -600,7 +654,7 @@ Pango markup can be used to formatting the output.
 
     Default: {mode} {text}
 
-Note: This setting is ignored if `combi-hide-mode-prefix` is eanbled.
+Note: This setting is ignored if `combi-hide-mode-prefix` is enabled.
 
 
 ### History and Sorting
@@ -654,9 +708,39 @@ configuration {
       sorting-method: "name";
       /** Group directories before files. */
       directories-first: true;
+      /** Show hidden files. */
+      show-hidden: false;
+      /** return 1 on cancel. */
+      cancel-returns-1: true;
+      /** command */
+      command: "xdg-open";
    }
 }
 ```
+
+These options can also be passed on the commandline, for example:
+
+```bash
+rofi -filebrowser-cancel-returns-1 true -show filebrowser
+```
+
+The `show-hidden` can also be triggered with the `kb-delete-entry` keybinding.
+
+### Entry history
+
+The number of previous inputs for the entry box can be modified by setting
+max-history on the entry box.
+
+```css
+configuration {
+    entry  {
+        max-history: 30;
+    }
+}
+```
+
+By default the file is stored in the systems cache directory, in a file called
+`rofi-entry-history.txt`.
 
 ### Other
 
@@ -701,6 +785,12 @@ configuration {
 Click the mouse outside the **rofi** window to exit.
 
 Default: *enabled*
+
+`-xserver-i300-workaround`
+
+Workaround for bug in Xserver. See issue #611 and #1642 on the rofi issue tracker.
+
+Default: *disabled*
 
 ## PATTERN
 
@@ -842,7 +932,7 @@ If no match, the input is handled by the first combined modes.
 
 ### The text in the window switcher is not nicely aligned.
 
-Try using a mono-space font.
+Try using a mono-space font or tabs + the tab-stops setting..
 
 ### The window is completely black.
 
@@ -932,13 +1022,13 @@ been released.
 
 ## WEBSITE
 
-**rofi** website can be found [here](https://davedavenport.github.io/rofi/)
+**rofi** website can be found [here](https://github.com/davatorium/rofi/)
 
 ## SUPPORT
 
 **rofi** support can be obtained:
+
  * [GitHub Discussions](https://github.com/davatorium/rofi/discussions)
- * [Forum (Reddit)](https://reddit.com/r/qtools//)
  * [IRC](irc://irc.libera.chat:6697/#rofi) (#rofi on irc.libera.chat),
 
 ## DEBUGGING
@@ -947,14 +1037,14 @@ For more information see **rofi-debugging(5)** manpage.
 
 ## ISSUE TRACKER
 
-The **rofi** issue tracker can be found [here](https://github.com/DaveDavenport/rofi/issues)
-
-When creating an issue, please read [this](https://github.com/DaveDavenport/rofi/blob/master/.github/CONTRIBUTING.md)
+The **rofi** issue tracker can be found [here](https://github.com/davatorium/rofi/issues)
+Before creating an issue, consider posting a question on the [discussion forum](https://github.com/davatorium/rofi/discussions) first.
+When creating an issue, please read [this](https://github.com/davatorium/rofi/blob/master/.github/CONTRIBUTING.md)
 first.
 
 ## SEE ALSO
 
-**rofi-sensible-terminal(1)**, **dmenu(1)**, **rofi-debugging(5)**, **rofi-theme(5)**, **rofi-script(5)**, **rofi-keys(5)**,**rofi-theme-selector(1)**
+**rofi-sensible-terminal(1)**, **dmenu(1)**, **rofi-debugging(5)**, **rofi-theme(5)**, **rofi-script(5)**, **rofi-keys(5)**,**rofi-theme-selector(1)**,**rofi-dmenu(5)**
 
 ## AUTHOR
 

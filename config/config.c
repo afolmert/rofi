@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -154,5 +154,8 @@ Settings config = {
     .steal_focus = FALSE,
     /** fallback icon */
     .application_fallback_icon = NULL,
-    /** refilter limit */
-    .refilter_timeout_limit = 8192};
+    /** refilter limit in ms*/
+    .refilter_timeout_limit = 300,
+    /** workaround for broken xserver (#300 on xserver, #611) */
+    .xserver_i300_workaround = FALSE,
+};

@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -67,6 +67,8 @@ typedef struct {
   char *prompt;
   char *data;
   gboolean do_markup;
+  gboolean keep_selection;
+  int64_t new_selection;
   char delim;
   /** no custom */
   gboolean no_custom;
@@ -81,10 +83,13 @@ void dmenuscript_parse_entry_extras(G_GNUC_UNUSED Mode *sw,
                                     DmenuScriptEntry *entry, char *buffer,
                                     G_GNUC_UNUSED size_t length) {
   gchar **extras = g_strsplit(buffer, "\x1f", -1);
-  gchar **extra;
-  for (extra = extras; *extra != NULL && *(extra + 1) != NULL; extra += 2) {
+  gchar **extra = extras;
+  for (; *extra != NULL && *(extra + 1) != NULL; extra += 2) {
     gchar *key = *extra;
     gchar *value = *(extra + 1);
+    // Mark NULL
+    *(extra) = NULL;
+    *(extra+1) = NULL;
     if (strcasecmp(key, "icon") == 0) {
       entry->icon_name = value;
     } else if (strcasecmp(key, "meta") == 0) {
@@ -92,12 +97,22 @@ void dmenuscript_parse_entry_extras(G_GNUC_UNUSED Mode *sw,
     } else if (strcasecmp(key, "info") == 0) {
       entry->info = value;
     } else if (strcasecmp(key, "nonselectable") == 0) {
-      entry->nonselectable = strcasecmp(value, "true") == 0;
+      entry->nonselectable = g_ascii_strcasecmp(value, "true") == 0;
+      g_free(value);
+    } else if (strcasecmp(key, "urgent") == 0) {
+      entry->urgent = g_ascii_strcasecmp(value, "true") == 0;
+      g_free(value);
+    } else if (strcasecmp(key, "active") == 0) {
+      entry->active = g_ascii_strcasecmp(value, "true") == 0;
       g_free(value);
     } else {
       g_free(value);
     }
     g_free(key);
+  }
+  // Got an extra entry.. lets free it.
+  if ( *extras != NULL ) {
+    g_free(*extras);
   }
   g_free(extras);
 }
@@ -135,9 +150,18 @@ static void parse_header_entry(Mode *sw, char *line, ssize_t length) {
       pd->no_custom = (strcasecmp(value, "true") == 0);
     } else if (strcasecmp(line, "use-hot-keys") == 0) {
       pd->use_hot_keys = (strcasecmp(value, "true") == 0);
+    } else if (strcasecmp(line, "keep-selection") == 0) {
+      pd->keep_selection = (strcasecmp(value, "true") == 0);
+    } else if (strcasecmp(line, "new-selection") == 0) {
+      pd->new_selection = (int64_t)g_ascii_strtoll(value, NULL, 0);
     } else if (strcasecmp(line, "data") == 0) {
       g_free(pd->data);
       pd->data = g_strdup(value);
+    } else if (strcasecmp(line, "theme") == 0) {
+      if (rofi_theme_parse_string((const char *)value)) {
+        g_warning("Failed to parse: '%s'", value);
+        rofi_clear_error_messages();
+      }
     }
   }
 }
@@ -152,7 +176,9 @@ static DmenuScriptEntry *execute_executor(Mode *sw, char *arg,
   char **argv = NULL;
   int argc = 0;
   *length = 0;
-
+  // Reset these between runs.
+  pd->new_selection = -1;
+  pd->keep_selection = 0;
   // Environment
   char **env = g_get_environ();
 
@@ -218,14 +244,17 @@ static DmenuScriptEntry *execute_executor(Mode *sw, char *arg,
             retv[(*length)].icon_name = NULL;
             retv[(*length)].meta = NULL;
             retv[(*length)].info = NULL;
+            retv[(*length)].active = FALSE;
+            retv[(*length)].urgent = FALSE;
             retv[(*length)].icon_fetch_uid = 0;
+            retv[(*length)].icon_fetch_size = 0;
             retv[(*length)].nonselectable = FALSE;
             if (buf_length > 0 && (read_length > (ssize_t)buf_length)) {
               dmenuscript_parse_entry_extras(sw, &(retv[(*length)]),
                                              buffer + buf_length,
                                              read_length - buf_length);
             }
-            retv[(*length) + 1].entry = NULL;
+            memset(&(retv[(*length)+1]), 0, sizeof(DmenuScriptEntry));
             (*length)++;
           }
         }
@@ -328,12 +357,26 @@ static ModeMode script_mode_result(Mode *sw, int mretv, char **input,
       g_free(rmpd->cmd_list[i].entry);
       g_free(rmpd->cmd_list[i].icon_name);
       g_free(rmpd->cmd_list[i].meta);
+      g_free(rmpd->cmd_list[i].info);
     }
     g_free(rmpd->cmd_list);
 
     rmpd->cmd_list = new_list;
     rmpd->cmd_list_length = new_length;
-    retv = RESET_DIALOG;
+    if (rmpd->keep_selection) {
+      if (rmpd->new_selection >= 0 &&
+          rmpd->new_selection < rmpd->cmd_list_length) {
+        rofi_view_set_selected_line(rofi_view_get_active(),
+                                    rmpd->new_selection);
+      } else {
+        rofi_view_set_selected_line(rofi_view_get_active(), selected_line);
+      }
+      g_free(*input);
+      *input = NULL;
+      retv = RELOAD_DIALOG;
+    } else {
+      retv = RESET_DIALOG;
+    }
   }
   return retv;
 }
@@ -386,6 +429,12 @@ static char *_get_display_value(const Mode *sw, unsigned int selected_line,
       *state |= URGENT;
     }
   }
+  if ( pd->cmd_list[selected_line].urgent ) {
+    *state |= URGENT;
+  }
+  if ( pd->cmd_list[selected_line].active ) {
+    *state |= ACTIVE;
+  }
   if (pd->do_markup) {
     *state |= MARKUP;
   }
@@ -395,29 +444,44 @@ static char *_get_display_value(const Mode *sw, unsigned int selected_line,
 static int script_token_match(const Mode *sw, rofi_int_matcher **tokens,
                               unsigned int index) {
   ScriptModePrivateData *rmpd = sw->private_data;
-  int match = 1;
-  if (tokens) {
-    for (int j = 0; match && tokens[j] != NULL; j++) {
-      rofi_int_matcher *ftokens[2] = {tokens[j], NULL};
-      int test = 0;
-      test = helper_token_match(ftokens, rmpd->cmd_list[index].entry);
-      if (test == tokens[j]->invert && rmpd->cmd_list[index].meta) {
-        test = helper_token_match(ftokens, rmpd->cmd_list[index].meta);
-      }
+  /** Strip out the markup when matching. */
+  char *esc = NULL;
+  if (rmpd->do_markup) {
+    pango_parse_markup(rmpd->cmd_list[index].entry, -1, 0, NULL, &esc, NULL,
+                       NULL);
+  } else {
+    esc = rmpd->cmd_list[index].entry;
+  }
+  if (esc) {
+    int match = 1;
+    if (tokens) {
+      for (int j = 0; match && tokens[j] != NULL; j++) {
+        rofi_int_matcher *ftokens[2] = {tokens[j], NULL};
+        int test = 0;
+        test = helper_token_match(ftokens, esc);
+        if (test == tokens[j]->invert && rmpd->cmd_list[index].meta) {
+          test = helper_token_match(ftokens, rmpd->cmd_list[index].meta);
+        }
 
-      if (test == 0) {
-        match = 0;
+        if (test == 0) {
+          match = 0;
+        }
       }
     }
+    if (rmpd->do_markup) {
+      g_free(esc);
+    }
+    return match;
   }
-  return match;
+  return FALSE;
 }
 static char *script_get_message(const Mode *sw) {
   ScriptModePrivateData *pd = sw->private_data;
   return g_strdup(pd->message);
 }
-static cairo_surface_t *
-script_get_icon(const Mode *sw, unsigned int selected_line, int height) {
+static cairo_surface_t *script_get_icon(const Mode *sw,
+                                        unsigned int selected_line,
+                                        unsigned int height) {
   ScriptModePrivateData *pd =
       (ScriptModePrivateData *)mode_get_private_data(sw);
   g_return_val_if_fail(pd->cmd_list != NULL, NULL);
@@ -425,30 +489,105 @@ script_get_icon(const Mode *sw, unsigned int selected_line, int height) {
   if (dr->icon_name == NULL) {
     return NULL;
   }
-  if (dr->icon_fetch_uid > 0) {
+  if (dr->icon_fetch_uid > 0 && dr->icon_fetch_size == height) {
     return rofi_icon_fetcher_get(dr->icon_fetch_uid);
   }
   dr->icon_fetch_uid = rofi_icon_fetcher_query(dr->icon_name, height);
+  dr->icon_fetch_size = height;
   return rofi_icon_fetcher_get(dr->icon_fetch_uid);
 }
 
 #include "mode-private.h"
+
+/** Structure that holds a user script
+ * found in $config/rofi/scripts/
+ */
+typedef struct ScriptUser {
+  /** name of the script */
+  char *name;
+  /** path to the script. */
+  char *path;
+} ScriptUser;
+
+/** list of user_scripts. */
+ScriptUser *user_scripts = NULL;
+/** number of user scripts collected */
+size_t num_scripts = 0;
+
+void script_mode_cleanup(void) {
+  for (size_t i = 0; i < num_scripts; i++) {
+    g_free(user_scripts[i].name);
+    g_free(user_scripts[i].path);
+  }
+  g_free(user_scripts);
+}
+void script_mode_gather_user_scripts(void) {
+  const char *cpath = g_get_user_config_dir();
+  char *script_dir = g_build_filename(cpath, "rofi", "scripts", NULL);
+  if (g_file_test(script_dir, G_FILE_TEST_EXISTS | G_FILE_TEST_IS_DIR) ==
+      FALSE) {
+    g_free(script_dir);
+    return;
+  }
+  GDir *sd = g_dir_open(script_dir, 0, NULL);
+  if (sd) {
+    const char *file = NULL;
+    while ((file = g_dir_read_name(sd)) != NULL) {
+      char *sp = g_build_filename(cpath, "rofi", "scripts", file, NULL);
+      user_scripts =
+          g_realloc(user_scripts, sizeof(ScriptUser) * (num_scripts + 1));
+      user_scripts[num_scripts].path = sp;
+      user_scripts[num_scripts].name = g_strdup(file);
+      char *dot = strrchr(user_scripts[num_scripts].name, '.');
+      if (dot) {
+        *dot = '\0';
+      }
+      num_scripts++;
+    }
+    g_dir_close(sd);
+  }
+
+  g_free(script_dir);
+}
+
+static int script_mode_has_user_script(char const *const user) {
+
+  for (size_t i = 0; i < num_scripts; i++) {
+    if (g_strcmp0(user_scripts[i].name, user) == 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 Mode *script_mode_parse_setup(const char *str) {
+  int ui = 0;
+  if ((ui = script_mode_has_user_script(str)) >= 0) {
+    Mode *sw = g_malloc0(sizeof(*sw));
+    sw->name = g_strdup(user_scripts[ui].name);
+    sw->ed = g_strdup(user_scripts[ui].path);
+    sw->free = script_switcher_free;
+    sw->_init = script_mode_init;
+    sw->_get_num_entries = script_mode_get_num_entries;
+    sw->_result = script_mode_result;
+    sw->_destroy = script_mode_destroy;
+    sw->_token_match = script_token_match;
+    sw->_get_message = script_get_message;
+    sw->_get_icon = script_get_icon;
+    sw->_get_completion = NULL, sw->_preprocess_input = NULL,
+    sw->_get_display_value = _get_display_value;
+    return sw;
+  }
   Mode *sw = g_malloc0(sizeof(*sw));
-  char *endp = NULL;
-  char *parse = g_strdup(str);
   unsigned int index = 0;
   const char *const sep = ":";
-  for (char *token = strtok_r(parse, sep, &endp); token != NULL;
-       token = strtok_r(NULL, sep, &endp)) {
-    if (index == 0) {
-      sw->name = g_strdup(token);
-    } else if (index == 1) {
-      sw->ed = (void *)rofi_expand_path(token);
-    }
-    index++;
+  char **tokens = g_strsplit(str, sep, 2);
+  if (tokens) {
+    index = g_strv_length(tokens);
+    sw->name = g_strdup(tokens[0]);
+    sw->ed = (void *)rofi_expand_path(tokens[1]);
+    g_strfreev(tokens);
   }
-  g_free(parse);
   if (index == 2) {
     sw->free = script_switcher_free;
     sw->_init = script_mode_init;
@@ -472,5 +611,17 @@ Mode *script_mode_parse_setup(const char *str) {
 }
 
 gboolean script_mode_is_valid(const char *token) {
+  if (script_mode_has_user_script(token) >= 0) {
+    return TRUE;
+  }
   return strchr(token, ':') != NULL;
+}
+
+void script_user_list(gboolean is_term) {
+
+  for (unsigned int i = 0; i < num_scripts; i++) {
+    printf("        • %s%s%s (%s)\n", is_term ? (color_bold) : "",
+           user_scripts[i].name, is_term ? color_reset : "",
+           user_scripts[i].path);
+  }
 }

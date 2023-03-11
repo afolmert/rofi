@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -25,7 +25,7 @@
  *
  */
 
-#include <config.h>
+#include "config.h"
 #include <glib.h>
 #include <widgets/box.h>
 #include <widgets/icon.h>
@@ -36,6 +36,7 @@
 
 #include "settings.h"
 #include "theme.h"
+#include "view.h"
 
 #include "timings.h"
 
@@ -102,7 +103,6 @@ struct _listview {
   gboolean filtered;
 
   gboolean cycle;
-  gboolean multi_select;
 
   ScrollType scroll_type;
 
@@ -111,6 +111,9 @@ struct _listview {
 
   listview_update_callback callback;
   void *udata;
+
+  listview_selection_changed_callback sc_callback;
+  void *sc_udata;
 
   gboolean scrollbar_scroll;
 
@@ -165,7 +168,7 @@ static void listview_set_state(_listview_row r, TextBoxFontType tbft) {
 }
 static void listview_add_widget(listview *lv, _listview_row *row, widget *wid,
                                 const char *label) {
-  TextboxFlags flags = (lv->multi_select) ? TB_INDICATOR : 0;
+  TextboxFlags flags = 0;
   if (strcasecmp(label, "element-icon") == 0) {
     row->icon = icon_create(WIDGET(wid), "element-icon");
     box_add((box *)wid, WIDGET(row->icon), FALSE);
@@ -173,12 +176,35 @@ static void listview_add_widget(listview *lv, _listview_row *row, widget *wid,
     row->textbox =
         textbox_create(WIDGET(wid), WIDGET_TYPE_TEXTBOX_TEXT, "element-text",
                        TB_AUTOHEIGHT | flags, NORMAL, "DDD", 0, 0);
+    textbox_set_ellipsize(row->textbox, lv->emode);
     box_add((box *)wid, WIDGET(row->textbox), TRUE);
   } else if (strcasecmp(label, "element-index") == 0) {
     row->index =
         textbox_create(WIDGET(wid), WIDGET_TYPE_TEXTBOX_TEXT, "element-index",
                        TB_AUTOHEIGHT, NORMAL, " ", 0, 0);
     box_add((box *)wid, WIDGET(row->index), FALSE);
+  } else if (strncasecmp(label, "textbox", 7) == 0) {
+    textbox *textbox_custom =
+        textbox_create(wid, WIDGET_TYPE_TEXTBOX_TEXT, label,
+                       TB_AUTOHEIGHT | TB_WRAP, NORMAL, "", 0, 0);
+    box_add((box *)wid, WIDGET(textbox_custom), TRUE);
+  } else if (strncasecmp(label, "button", 6) == 0) {
+    textbox *button_custom =
+        textbox_create(wid, WIDGET_TYPE_EDITBOX, label,
+                       TB_AUTOHEIGHT | TB_WRAP, NORMAL, "", 0, 0);
+    box_add((box *)wid, WIDGET(button_custom), TRUE);
+    widget_set_trigger_action_handler(WIDGET(button_custom), textbox_button_trigger_action,
+                                      lv->udata);
+  } else if (strncasecmp(label, "icon", 4) == 0) {
+    icon *icon_custom = icon_create(wid, label);
+    /* small hack to make it clickable */
+    const char *type = rofi_theme_get_string(WIDGET(icon_custom), "action", NULL);
+    if (type) {
+      WIDGET(icon_custom)->type = WIDGET_TYPE_EDITBOX;
+    }
+    box_add((box *)wid, WIDGET(icon_custom), TRUE);
+    widget_set_trigger_action_handler(WIDGET(icon_custom), textbox_button_trigger_action,
+                                      lv->udata);
   } else {
     widget *wid2 = (widget *)box_create(wid, label, ROFI_ORIENTATION_VERTICAL);
     box_add((box *)wid, WIDGET(wid2), TRUE);
@@ -562,7 +588,7 @@ void listview_set_num_elements(listview *lv, unsigned int rows) {
   }
   TICK_N("listview_set_num_elements");
   lv->req_elements = rows;
-  if ( lv->require_input && !lv->filtered ) {
+  if (lv->require_input && !lv->filtered) {
     lv->req_elements = 0;
   }
   listview_set_selected(lv, lv->selected);
@@ -581,10 +607,20 @@ unsigned int listview_get_selected(listview *lv) {
 }
 
 void listview_set_selected(listview *lv, unsigned int selected) {
-  if (lv && lv->req_elements > 0) {
+  if (lv == NULL) {
+    return;
+  }
+  if (lv->req_elements > 0) {
     lv->selected = MIN(selected, lv->req_elements - 1);
     lv->barview.direction = LEFT_TO_RIGHT;
     widget_queue_redraw(WIDGET(lv));
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, lv->selected, lv->sc_udata);
+    }
+  } else if (lv->req_elements == 0) {
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, UINT32_MAX, lv->sc_udata);
+    }
   }
 }
 
@@ -594,7 +630,11 @@ static void listview_resize(widget *wid, short w, short h) {
   lv->widget.h = MAX(0, h);
   int height = lv->widget.h - widget_padding_get_padding_height(WIDGET(lv));
   int spacing_vert = distance_get_pixel(lv->spacing, ROFI_ORIENTATION_VERTICAL);
-  lv->max_rows = (spacing_vert + height) / (lv->element_height + spacing_vert);
+  if ( lv->widget.h == 0 ) {
+	  lv->max_rows = lv->menu_lines;
+  } else {
+	  lv->max_rows = (spacing_vert + height) / (lv->element_height + spacing_vert);
+  }
   lv->max_elements = lv->max_rows * lv->menu_columns;
 
   widget_move(WIDGET(lv->scrollbar),
@@ -731,6 +771,7 @@ listview *listview_create(widget *parent, const char *name,
       buff[i * 2] = 'a';
       buff[i * 2 + 1] = '\n';
     };
+    textbox_moveresize(row.textbox, 0, 0, 100000000, -1);
     textbox_text(row.textbox, buff);
   }
   // Make textbox very wide.
@@ -744,6 +785,8 @@ listview *listview_create(widget *parent, const char *name,
   lv->spacing = rofi_theme_get_distance(WIDGET(lv), "spacing", DEFAULT_SPACING);
   lv->menu_columns =
       rofi_theme_get_integer(WIDGET(lv), "columns", DEFAULT_MENU_COLUMNS);
+  lv->menu_lines =
+      rofi_theme_get_integer(WIDGET(lv), "lines", DEFAULT_MENU_LINES);
   lv->fixed_num_lines = rofi_theme_get_boolean(WIDGET(lv), "fixed-height",
                                                config.fixed_num_lines);
   lv->dynamic = rofi_theme_get_boolean(WIDGET(lv), "dynamic", TRUE);
@@ -783,6 +826,10 @@ static void listview_nav_up_int(listview *lv) {
   }
   lv->selected--;
   lv->barview.direction = RIGHT_TO_LEFT;
+
+  if (lv->sc_callback) {
+    lv->sc_callback(lv, lv->selected, lv->sc_udata);
+  }
   widget_queue_redraw(WIDGET(lv));
 }
 static void listview_nav_down_int(listview *lv) {
@@ -797,6 +844,9 @@ static void listview_nav_down_int(listview *lv) {
                      ? MIN(lv->req_elements - 1, lv->selected + 1)
                      : 0;
   lv->barview.direction = LEFT_TO_RIGHT;
+  if (lv->sc_callback) {
+    lv->sc_callback(lv, lv->selected, lv->sc_udata);
+  }
   widget_queue_redraw(WIDGET(lv));
 }
 void listview_nav_next(listview *lv) {
@@ -815,12 +865,18 @@ void listview_nav_prev(listview *lv) {
 static void listview_nav_column_left_int(listview *lv) {
   if (lv->selected >= lv->cur_columns) {
     lv->selected -= lv->cur_columns;
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, lv->selected, lv->sc_udata);
+    }
     widget_queue_redraw(WIDGET(lv));
   }
 }
 static void listview_nav_column_right_int(listview *lv) {
   if ((lv->selected + lv->cur_columns) < lv->req_elements) {
     lv->selected += lv->cur_columns;
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, lv->selected, lv->sc_udata);
+    }
     widget_queue_redraw(WIDGET(lv));
   }
 }
@@ -879,6 +935,9 @@ void listview_nav_left(listview *lv) {
   }
   if (lv->selected >= lv->max_rows) {
     lv->selected -= lv->max_rows;
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, lv->selected, lv->sc_udata);
+    }
     widget_queue_redraw(WIDGET(lv));
   }
 }
@@ -899,6 +958,9 @@ void listview_nav_right(listview *lv) {
   }
   if ((lv->selected + lv->max_rows) < lv->req_elements) {
     lv->selected += lv->max_rows;
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, lv->selected, lv->sc_udata);
+    }
     widget_queue_redraw(WIDGET(lv));
   } else if (lv->selected < (lv->req_elements - 1)) {
     // We do not want to move to last item, UNLESS the last column is only
@@ -910,6 +972,9 @@ void listview_nav_right(listview *lv) {
     // If there is an extra column, move.
     if (col != ncol) {
       lv->selected = lv->req_elements - 1;
+      if (lv->sc_callback) {
+        lv->sc_callback(lv, lv->selected, lv->sc_udata);
+      }
       widget_queue_redraw(WIDGET(lv));
     }
   }
@@ -935,6 +1000,9 @@ static void listview_nav_page_prev_int(listview *lv) {
   } else {
     lv->selected -= (lv->max_elements);
   }
+  if (lv->sc_callback) {
+    lv->sc_callback(lv, lv->selected, lv->sc_udata);
+  }
   widget_queue_redraw(WIDGET(lv));
 }
 static void listview_nav_page_next_int(listview *lv) {
@@ -949,12 +1017,18 @@ static void listview_nav_page_next_int(listview *lv) {
     lv->selected = MIN(new, lv->req_elements - 1);
     lv->barview.direction = LEFT_TO_RIGHT;
 
+    if (lv->sc_callback) {
+      lv->sc_callback(lv, lv->selected, lv->sc_udata);
+    }
     widget_queue_redraw(WIDGET(lv));
     return;
   }
   lv->selected += (lv->max_elements);
   if (lv->selected >= lv->req_elements) {
     lv->selected = lv->req_elements - 1;
+  }
+  if (lv->sc_callback) {
+    lv->sc_callback(lv, lv->selected, lv->sc_udata);
   }
   widget_queue_redraw(WIDGET(lv));
 }
@@ -1035,16 +1109,6 @@ void listview_set_mouse_activated_cb(listview *lv,
     lv->mouse_activated_data = udata;
   }
 }
-void listview_set_multi_select(listview *lv, gboolean enable) {
-  if (lv) {
-    lv->multi_select = enable;
-  }
-}
-void listview_set_num_lines(listview *lv, unsigned int num_lines) {
-  if (lv) {
-    lv->menu_lines = num_lines;
-  }
-}
 
 void listview_set_max_lines(listview *lv, unsigned int max_lines) {
   if (lv) {
@@ -1064,9 +1128,9 @@ void listview_set_fixed_num_lines(listview *lv) {
   }
 }
 
-void listview_set_ellipsize_start(listview *lv) {
+void listview_set_ellipsize(listview *lv, PangoEllipsizeMode mode) {
   if (lv) {
-    lv->emode = PANGO_ELLIPSIZE_START;
+    lv->emode = mode;
     for (unsigned int i = 0; i < lv->cur_elements; i++) {
       textbox_set_ellipsize(lv->boxes[i].textbox, lv->emode);
     }
@@ -1090,9 +1154,14 @@ void listview_toggle_ellipsizing(listview *lv) {
   }
 }
 
-void listview_set_filtered ( listview *lv, gboolean filtered )
-{
-  if ( lv ) {
+void listview_set_filtered(listview *lv, gboolean filtered) {
+  if (lv) {
     lv->filtered = filtered;
   }
+}
+
+void listview_set_selection_changed_callback(
+    listview *lv, listview_selection_changed_callback cb, void *udata) {
+  lv->sc_callback = cb;
+  lv->sc_udata = udata;
 }

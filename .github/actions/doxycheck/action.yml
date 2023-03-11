@@ -11,7 +11,7 @@ runs:
   steps:
     - id: check
       run: |
-        if [[ "$(grep -c warning ${{ inputs.logfile }})" != 0 ]]; then
+        if [[ "$(grep -c warning: ${{ inputs.logfile }})" != 0 ]]; then
           echo
           echo Doxygen warnings found:
           grep warning ${{ inputs.logfile }}
@@ -20,5 +20,5 @@ runs:
           exit 1
         fi
 
-        python2 ./doxy-coverage/doxy-coverage.py builddir/doc/html/xml/
+        python ./doxy-coverage/doxy-coverage.py builddir/doc/html/xml/
       shell: bash

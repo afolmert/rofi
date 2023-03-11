@@ -280,6 +280,37 @@ The column separator. This is a regex.
 .PP
 \fIdefault\fP: '\\t'
 
+.PP
+\fB\fC-ballot-selected-str\fR \fIstring\fP
+
+.PP
+When multi-select is enabled, prefix this string when element is selected.
+
+.PP
+\fIdefault\fP: "☑ "
+
+.PP
+\fB\fC-ballot-unselected-str\fR \fIstring\fP
+
+.PP
+When multi-select is enabled, prefix this string when element is not selected.
+
+.PP
+\fIdefault\fP: "☐ "
+
+.PP
+\fB\fC-ellipsize-mode\fR (start|middle|end)
+
+.PP
+Set ellipsize mode on the listview.
+
+.PP
+\fIdefault\fP "end"
+
+.SH PARSING ROW OPTIONS
+.PP
+Extra options for individual rows can be also set. See the \fBrofi-script(5)\fP manpage for details; the syntax and supported features are identical.
+
 .SH RETURN VALUE
 .RS
 .IP \(bu 2
@@ -293,7 +324,7 @@ The column separator. This is a regex.
 
 .SH SEE ALSO
 .PP
-rofi(1), rofi-sensible-terminal(1), dmenu(1), rofi-theme(5), rofi-script(5), rofi-theme-selector(1)
+rofi(1), rofi-sensible-terminal(1), dmenu(1), rofi-theme(5), rofi-script(5), rofi-theme-selector(1), ascii(7)
 
 .SH AUTHOR
 .PP

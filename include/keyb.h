@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -60,6 +60,8 @@ typedef enum {
   PASTE_PRIMARY = 1,
   /** Paste from secondary clipboard */
   PASTE_SECONDARY,
+  /** Copy to secondary clipboard */
+  COPY_SECONDARY,
   /** Clear the entry box. */
   CLEAR_LINE,
   /** Move to front of text */
@@ -141,6 +143,8 @@ typedef enum {
   SELECT_ELEMENT_8,
   SELECT_ELEMENT_9,
   SELECT_ELEMENT_10,
+  ENTRY_HISTORY_UP,
+  ENTRY_HISTORY_DOWN,
 } KeyBindingAction;
 
 /**
@@ -184,6 +188,10 @@ gboolean parse_keys_abe(NkBindings *bindings);
  */
 void setup_abe(void);
 
+/**
+ * List all available key bindings to the terminal.
+ */
+void abe_list_all_bindings(gboolean is_term);
 /**
  * @param name Don't have the name.
  *

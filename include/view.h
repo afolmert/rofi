@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -29,6 +29,8 @@
 #define ROFI_VIEW_H
 
 #include "mode.h"
+#include "widgets/widget.h"
+#include <pango/pango.h>
 #include <xcb/xcb.h>
 /**
  * @defgroup View View
@@ -54,8 +56,6 @@ typedef enum {
   MENU_NORMAL_WINDOW = 2,
   /** ERROR dialog */
   MENU_ERROR_DIALOG = 4,
-  /** INDICATOR */
-  MENU_INDICATOR = 8,
 } MenuFlags;
 
 /**
@@ -340,8 +340,26 @@ void rofi_capture_screenshot(void);
 void rofi_view_set_window_title(const char *title);
 
 /**
+  @param state The window state handle
+  @param mode The pango ellipsize mode to user
  * set ellipsize mode to start.
  */
-void rofi_view_ellipsize_start(RofiViewState *state);
+void rofi_view_ellipsize_listview(RofiViewState *state,
+                                  PangoEllipsizeMode mode);
+
+/**
+ * @param new_x New XIM window x pos
+ * @param new_y New XIM window y pos
+ *
+ * Updates the XIM window position to new_x and new_y, relative to the
+ * main_window
+ */
+gboolean rofi_set_im_window_pos(int new_x, int new_y);
+
+
+WidgetTriggerActionResult textbox_button_trigger_action(
+    widget *wid, MouseBindingMouseDefaultAction action, G_GNUC_UNUSED gint x,
+    G_GNUC_UNUSED gint y, G_GNUC_UNUSED void *user_data);
+
 /** @} */
 #endif

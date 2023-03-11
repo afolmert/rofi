@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -167,9 +167,17 @@ static ModeMode combi_mode_result(Mode *sw, int mretv, char **input,
     }
     if (switcher >= 0) {
       if (eob[0] == ' ') {
-        char *n = eob + 1;
-        return mode_result(pd->switchers[switcher].mode, mretv, &n,
-                           selected_line - pd->starts[switcher]);
+        char *n = g_strdup(eob + 1);
+        ModeMode retv = mode_result(pd->switchers[switcher].mode, mretv, &n,
+                                    selected_line - pd->starts[switcher]);
+        g_free(n);
+        return retv;
+      } else if (eob[0] == '\0') {
+        char *str = NULL;
+        ModeMode retv = mode_result(pd->switchers[switcher].mode, mretv, &str,
+                                    selected_line - pd->starts[switcher]);
+        g_free(str);
+        return retv;
       }
       return MODE_EXIT;
     }
@@ -277,7 +285,7 @@ static char *combi_get_completion(const Mode *sw, unsigned int index) {
 }
 
 static cairo_surface_t *combi_get_icon(const Mode *sw, unsigned int index,
-                                       int height) {
+                                       unsigned int height) {
   CombiModePrivateData *pd = mode_get_private_data(sw);
   for (unsigned i = 0; i < pd->num_switchers; i++) {
     if (index >= pd->starts[i] && index < (pd->starts[i] + pd->lengths[i])) {

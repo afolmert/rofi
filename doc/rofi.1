@@ -10,9 +10,9 @@
 
 .SH DESCRIPTION
 .PP
-\fBrofi\fP is an X11 pop-up window switcher, run dialog, dmenu replacement, and more. It focuses on
-being fast to use and have minimal distraction. It supports keyboard and mouse navigation, type to
-filter, tokenized search and more.
+\fBrofi\fP is an X11 pop-up window switcher, run dialog, dmenu replacement, and
+more. It focuses on being fast to use and have minimal distraction. It supports
+keyboard and mouse navigation, type to filter, tokenized search and more.
 
 .SH USAGE
 .PP
@@ -38,7 +38,7 @@ To show the \fB\fCdrun\fR dialog:
 .RE
 
 .PP
-A very useful setup in minimalistic window managers is to combine \fB\fCdrun\fR, \fB\fCrun\fR
+A useful setup in minimalistic window managers is to combine \fB\fCdrun\fR, \fB\fCrun\fR
 with \fB\fCwindow\fR mode:
 
 .PP
@@ -57,7 +57,8 @@ running firefox, or launch it when it is not running.
 
 .SS Emulating dmenu
 .PP
-\fBrofi\fP can emulate \fBdmenu(1)\fP (a dynamic menu for X11) when launched with the \fB\fC-dmenu\fR flag.
+\fBrofi\fP can emulate \fBdmenu(1)\fP (a dynamic menu for X11) when launched with
+the \fB\fC-dmenu\fR flag.
 
 .PP
 For more information see \fBrofi-dmenu(5)\fP\&.
@@ -191,8 +192,8 @@ Below is a list of the most important options:
 \fB\fC-help\fR
 
 .PP
-The help option shows the full list of command-line options and the current set values.
-These include dynamic (run-time generated) options.
+The help option shows the full list of command-line options and the current set
+values. These include dynamic (run-time generated) options.
 
 .PP
 \fB\fC-version\fR
@@ -218,6 +219,13 @@ Dump the current active theme, in rasi format, to stdout and exit.
 
 .PP
 Try to parse the file and return 0 when successful, non-zero when failed.
+
+.PP
+\fB\fC-list-keybindings\fR
+
+.PP
+List all known keybindings without trying to parse them. This can be used to
+look for duplicate bindings.
 
 .PP
 \fB\fC-threads\fR \fInum\fP
@@ -277,9 +285,10 @@ See the \fBrofi-dmenu(5)\fP manpage for more information.
 \fB\fC-show\fR \fImode\fP
 
 .PP
-Open \fBrofi\fP in a certain mode. Available modes are \fB\fCwindow\fR, \fB\fCrun\fR, \fB\fCdrun\fR, \fB\fCssh\fR, \fB\fCcombi\fR\&.
-The special argument \fB\fCkeys\fR can be used to open a searchable list of supported key bindings
-(see \fIKEY BINDINGS\fP)
+Open \fBrofi\fP in a certain mode. Available modes are \fB\fCwindow\fR, \fB\fCrun\fR, \fB\fCdrun\fR,
+\fB\fCssh\fR, \fB\fCcombi\fR\&. The special argument \fB\fCkeys\fR can be used to open a searchable
+list of supported key bindings
+(see the \fBrofi-keys(5)\fP manpage)
 
 .PP
 To show the run-dialog:
@@ -315,7 +324,8 @@ rofi -modes "run,ssh" -show run
 .RE
 
 .PP
-Custom modes can be added using the internal \fB\fCscript\fR mode. Each such mode has two parameters:
+Custom modes can be added using the internal \fB\fCscript\fR mode. Each such mode has
+two parameters:
 
 .PP
 .RS
@@ -339,8 +349,8 @@ rofi -modes "window,run,ssh,Workspaces:i3_switch_workspaces.sh" -show Workspaces
 .RE
 
 .PP
-Notes: The i3 window manager dislikes commas in the command when specifying an exec command.
-For that case, \fB\fC#\fR can be used as a separator.
+Notes: The i3 window manager dislikes commas in the command when specifying an
+exec command. For that case, \fB\fC#\fR can be used as a separator.
 
 .PP
 \fBTIP\fP: The name is allowed to contain spaces:
@@ -432,12 +442,6 @@ If not specified default theme from DE is used, \fIAdwaita\fP and \fIgnome\fP th
 fallback themes.
 
 .PP
-\fB\fC-application-fallback-icon\fR
-
-.PP
-Specify an icon to be used when the application icon in run/drun are not yet loaded or is not available.
-
-.PP
 \fB\fC-markup\fR
 
 .PP
@@ -459,10 +463,42 @@ Make rofi steal focus on launch and restore close to window that held it when la
 \fB\fC-refilter-timeout-limit\fR
 
 .PP
-The limit of elements that is used to switch from instant to delayed filter mode.
+The time (in ms) boundary filter may take before switch from instant to delayed filter mode.
 
 .PP
-Default: 8192
+Default: 300
+
+.PP
+A fallback icon can be specified for each mode:
+
+.PP
+.RS
+
+.nf
+configuration {
+    <mode>{
+      fallback-icon: "<icon name>";
+    }
+}
+
+.fi
+.RE
+
+.PP
+Example
+
+.PP
+.RS
+
+.nf
+configuration {
+    run,drun {
+      fallback-icon: "application-x-addon";
+    }
+}
+
+.fi
+.RE
 
 .SS Matching
 .PP
@@ -866,6 +902,18 @@ See \fIPATTERN\fP\&.
 Default: \fI{cmd}\fP
 
 .PP
+Example to run applications in a dedicated cgroup with systemd. Requires a shell to escape and interpolate the unit name correctly.
+
+.PP
+.RS
+
+.nf
+"bash -c 'systemd-run --user --unit=app-rofi-\\$(systemd-escape {cmd})-\\$RANDOM {cmd}'"
+
+.fi
+.RE
+
+.PP
 \fB\fC-run-shell-command\fR \fIcmd\fP
 
 .PP
@@ -912,8 +960,7 @@ Format what is being displayed for windows.
 .RE
 
 .PP
-\fIlen\fP: maximum field length (0 for auto-size). If length and window \fIwidth\fP are negative, field length is \fIwidth - len\fP\&.
-.br
+\fIlen\fP: maximum field length (0 for auto-size). If length is negative, the entry will be unchanged.
 If length is positive, the entry will be truncated or padded to fill that length.
 
 .PP
@@ -950,6 +997,44 @@ configuration {
 
 .fi
 .RE
+
+.PP
+You can hide the currently active window with the 'hide-active-window' setting:
+
+.PP
+.RS
+
+.nf
+configuration {
+  window {
+      hide-active-window: true;
+  }
+}
+
+.fi
+.RE
+
+.PP
+or pass \fB\fC-window-hide-active-window true\fR on command line.
+
+.PP
+You can prefer the icon theme above the window set icon with the 'prefer-icon-theme' setting:
+
+.PP
+.RS
+
+.nf
+configuration {
+  window {
+      prefer-icon-theme: true;
+  }
+}
+
+.fi
+.RE
+
+.PP
+or pass \fB\fC-window-prefer-icon-theme true\fR on command line.
 
 .SS Combi settings
 .PP
@@ -1000,7 +1085,7 @@ Default: {mode} {text}
 .RE
 
 .PP
-Note: This setting is ignored if \fB\fCcombi-hide-mode-prefix\fR is eanbled.
+Note: This setting is ignored if \fB\fCcombi-hide-mode-prefix\fR is enabled.
 
 .SS History and Sorting
 .PP
@@ -1068,11 +1153,54 @@ configuration {
       sorting-method: "name";
       /** Group directories before files. */
       directories-first: true;
+      /** Show hidden files. */
+      show-hidden: false;
+      /** return 1 on cancel. */
+      cancel-returns-1: true;
+      /** command */
+      command: "xdg-open";
    }
 }
 
 .fi
 .RE
+
+.PP
+These options can also be passed on the commandline, for example:
+
+.PP
+.RS
+
+.nf
+rofi -filebrowser-cancel-returns-1 true -show filebrowser
+
+.fi
+.RE
+
+.PP
+The \fB\fCshow-hidden\fR can also be triggered with the \fB\fCkb-delete-entry\fR keybinding.
+
+.SS Entry history
+.PP
+The number of previous inputs for the entry box can be modified by setting
+max-history on the entry box.
+
+.PP
+.RS
+
+.nf
+configuration {
+    entry  {
+        max-history: 30;
+    }
+}
+
+.fi
+.RE
+
+.PP
+By default the file is stored in the systems cache directory, in a file called
+\fB\fCrofi-entry-history.txt\fR\&.
 
 .SS Other
 .PP
@@ -1136,6 +1264,15 @@ Click the mouse outside the \fBrofi\fP window to exit.
 
 .PP
 Default: \fIenabled\fP
+
+.PP
+\fB\fC-xserver-i300-workaround\fR
+
+.PP
+Workaround for bug in Xserver. See issue #611 and #1642 on the rofi issue tracker.
+
+.PP
+Default: \fIdisabled\fP
 
 .SH PATTERN
 .PP
@@ -1304,7 +1441,7 @@ If no match, the input is handled by the first combined modes.
 .SH FAQ
 .SS The text in the window switcher is not nicely aligned.
 .PP
-Try using a mono-space font.
+Try using a mono-space font or tabs + the tab-stops setting..
 
 .SS The window is completely black.
 .PP
@@ -1473,17 +1610,21 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 .SH WEBSITE
 .PP
 \fBrofi\fP website can be found here
-\[la]https://davedavenport.github.io/rofi/\[ra]
+\[la]https://github.com/davatorium/rofi/\[ra]
 
 .SH SUPPORT
 .PP
 \fBrofi\fP support can be obtained:
- * GitHub Discussions
+
+.RS
+.IP \(bu 2
+GitHub Discussions
 \[la]https://github.com/davatorium/rofi/discussions\[ra]
- * Forum (Reddit)
-\[la]https://reddit.com/r/qtools//\[ra]
- * IRC
+.IP \(bu 2
+IRC
 \[la]irc://irc.libera.chat:6697/#rofi\[ra] (#rofi on irc.libera.chat),
+
+.RE
 
 .SH DEBUGGING
 .PP
@@ -1492,16 +1633,16 @@ For more information see \fBrofi-debugging(5)\fP manpage.
 .SH ISSUE TRACKER
 .PP
 The \fBrofi\fP issue tracker can be found here
-\[la]https://github.com/DaveDavenport/rofi/issues\[ra]
-
-.PP
+\[la]https://github.com/davatorium/rofi/issues\[ra]
+Before creating an issue, consider posting a question on the discussion forum
+\[la]https://github.com/davatorium/rofi/discussions\[ra] first.
 When creating an issue, please read this
-\[la]https://github.com/DaveDavenport/rofi/blob/master/.github/CONTRIBUTING.md\[ra]
+\[la]https://github.com/davatorium/rofi/blob/master/.github/CONTRIBUTING.md\[ra]
 first.
 
 .SH SEE ALSO
 .PP
-\fBrofi-sensible-terminal(1)\fP, \fBdmenu(1)\fP, \fBrofi-debugging(5)\fP, \fBrofi-theme(5)\fP, \fBrofi-script(5)\fP, \fBrofi-keys(5)\fP,\fBrofi-theme-selector(1)\fP
+\fBrofi-sensible-terminal(1)\fP, \fBdmenu(1)\fP, \fBrofi-debugging(5)\fP, \fBrofi-theme(5)\fP, \fBrofi-script(5)\fP, \fBrofi-keys(5)\fP,\fBrofi-theme-selector(1)\fP,\fBrofi-dmenu(5)\fP
 
 .SH AUTHOR
 .RS

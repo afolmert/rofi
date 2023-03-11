@@ -3,7 +3,7 @@
  *
  * MIT/X11 License
  * Copyright © 2012 Sean Pringle <sean.pringle@gmail.com>
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -30,6 +30,9 @@
 #define G_LOG_DOMAIN "X11Helper"
 
 #include "config.h"
+#ifdef XCB_IMDKIT
+#include <xcb-imdkit/encoding.h>
+#endif
 #include <cairo-xcb.h>
 #include <cairo.h>
 #include <glib.h>
@@ -62,6 +65,7 @@
 #include "xcb-internal.h"
 #include "xcb.h"
 #include <libsn/sn.h>
+#include <stdbool.h>
 
 #include "mode.h"
 #include "modes/window.h"
@@ -84,10 +88,14 @@ WindowManagerQuirk current_window_manager = WM_EWHM;
  */
 struct _xcb_stuff xcb_int = {.connection = NULL,
                              .screen = NULL,
+#ifdef XCB_IMDKIT
+                             .im = NULL,
+#endif
                              .screen_nbr = -1,
                              .sndisplay = NULL,
                              .sncontext = NULL,
-                             .monitors = NULL};
+                             .monitors = NULL,
+                             .clipboard = NULL};
 xcb_stuff *xcb = &xcb_int;
 
 /**
@@ -427,6 +435,23 @@ static void x11_monitors_free(void) {
 }
 
 /**
+ * Quick function that tries to fix the size (for dpi calculation)
+ * when monitor is rotate. This assumes the density is kinda equal in both X/Y
+ * direction.
+ */
+static void x11_workarea_fix_rotation(workarea *w) {
+  double ratio_res = w->w / (double)w->h;
+  double ratio_size = w->mw / (double)w->mh;
+
+  if ((ratio_res < 1.0 && ratio_size > 1.0) ||
+      (ratio_res > 1.0 && ratio_size < 1.0)) {
+    // Oposite ratios, swap them.
+    int nh = w->mw;
+    w->mw = w->mh;
+    w->mh = nh;
+  }
+}
+/**
  * Create monitor based on output id
  */
 static workarea *x11_get_monitor_from_output(xcb_randr_output_t out) {
@@ -454,6 +479,7 @@ static workarea *x11_get_monitor_from_output(xcb_randr_output_t out) {
 
   retv->mw = op_reply->mm_width;
   retv->mh = op_reply->mm_height;
+  x11_workarea_fix_rotation(retv);
 
   char *tname = (char *)xcb_randr_get_output_info_name(op_reply);
   int tname_len = xcb_randr_get_output_info_name_length(op_reply);
@@ -504,6 +530,7 @@ x11_get_monitor_from_randr_monitor(xcb_randr_monitor_info_t *mon) {
   // Physical
   retv->mw = mon->width_in_millimeters;
   retv->mh = mon->height_in_millimeters;
+  x11_workarea_fix_rotation(retv);
 
   // Name
   retv->name =
@@ -965,8 +992,9 @@ static int monitor_active_from_id(int mon_id, workarea *mon) {
 
 // determine which monitor holds the active window, or failing that the mouse
 // pointer
-
+/** The cached monitor setup (mon_cache) is populated */
 gboolean mon_set = FALSE;
+/** cached monitor cache, to avoid multiple roundtrips to fetch this. */
 workarea mon_cache = {
     0,
 };
@@ -1041,6 +1069,35 @@ int monitor_active(workarea *mon) {
   return FALSE;
 }
 
+static bool get_atom_name(xcb_connection_t *conn, xcb_atom_t atom, char **out) {
+  xcb_get_atom_name_cookie_t cookie;
+  xcb_get_atom_name_reply_t *reply;
+  int length;
+  char *name;
+
+  if (atom == 0) {
+    *out = NULL;
+    return true;
+  }
+
+  cookie = xcb_get_atom_name(conn, atom);
+  reply = xcb_get_atom_name_reply(conn, cookie, NULL);
+  if (!reply)
+    return false;
+
+  length = xcb_get_atom_name_name_length(reply);
+  name = xcb_get_atom_name_name(reply);
+
+  (*out) = g_strndup(name, length);
+  if (!(*out)) {
+    free(reply);
+    return false;
+  }
+
+  free(reply);
+  return true;
+}
+
 /**
  * @param state Internal state of the menu.
  * @param xse   X selection event.
@@ -1050,7 +1107,7 @@ int monitor_active(workarea *mon) {
 static void rofi_view_paste(RofiViewState *state,
                             xcb_selection_notify_event_t *xse) {
   if (xse->property == XCB_ATOM_NONE) {
-    g_warning("Failed to convert selection");
+    g_debug("Failed to convert selection");
   } else if (xse->property == xcb->ewmh.UTF8_STRING) {
     gchar *text = window_get_text_prop(xse->requestor, xcb->ewmh.UTF8_STRING);
     if (text != NULL && text[0] != '\0') {
@@ -1065,7 +1122,13 @@ static void rofi_view_paste(RofiViewState *state,
     }
     g_free(text);
   } else {
-    g_warning("Failed");
+    char *out = NULL;
+    if (get_atom_name(xcb->connection, xse->property, &out)) {
+      g_debug("rofi_view_paste: Got unknown atom: %s", out);
+      g_free(out);
+    } else {
+      g_debug("rofi_view_paste: Got unknown, unnamed: %s", out);
+    }
   }
 }
 
@@ -1120,6 +1183,33 @@ static gboolean x11_button_to_nk_bindings_scroll(guint32 x11_button,
     return FALSE;
   }
   return TRUE;
+}
+
+static void rofi_key_press_event_handler(xcb_key_press_event_t *xkpe,
+                                         RofiViewState *state) {
+  gchar *text;
+  g_log("IMDKit", G_LOG_LEVEL_DEBUG, "press handler");
+
+  xcb->last_timestamp = xkpe->time;
+  if (config.xserver_i300_workaround) {
+    text = nk_bindings_seat_handle_key_with_modmask(
+        xcb->bindings_seat, NULL, xkpe->state, xkpe->detail,
+        NK_BINDINGS_KEY_STATE_PRESS);
+  } else {
+    text = nk_bindings_seat_handle_key(xcb->bindings_seat, NULL, xkpe->detail,
+                                       NK_BINDINGS_KEY_STATE_PRESS);
+  }
+  if (text != NULL) {
+    rofi_view_handle_text(state, text);
+    g_free(text);
+  }
+}
+
+static void rofi_key_release_event_handler(xcb_key_release_event_t *xkre,
+                                           G_GNUC_UNUSED RofiViewState *state) {
+  xcb->last_timestamp = xkre->time;
+  nk_bindings_seat_handle_key(xcb->bindings_seat, NULL, xkre->detail,
+                              NK_BINDINGS_KEY_STATE_RELEASE);
 }
 
 /**
@@ -1197,6 +1287,52 @@ static void main_loop_x11_event_handler_view(xcb_generic_event_t *event) {
     }
     break;
   }
+  case XCB_SELECTION_CLEAR: {
+    g_debug("Selection Clear.");
+    xcb_stuff_set_clipboard(NULL);
+  } break;
+  case XCB_SELECTION_REQUEST: {
+    g_debug("Selection Request.");
+    xcb_selection_request_event_t *req = (xcb_selection_request_event_t *)event;
+    if (req->selection == netatoms[CLIPBOARD]) {
+      xcb_atom_t targets[2];
+      xcb_selection_notify_event_t selection_notify = {
+          .response_type = XCB_SELECTION_NOTIFY,
+          .sequence = 0,
+          .time = req->time,
+          .requestor = req->requestor,
+          .selection = req->selection,
+          .target = req->target,
+          .property = XCB_ATOM_NONE,
+      };
+      // If no clipboard, we return NONE.
+      if (xcb->clipboard) {
+        // Request for UTF-8
+        if (req->target == netatoms[UTF8_STRING]) {
+          g_debug("Selection Request UTF-8.");
+          xcb_change_property(xcb->connection, XCB_PROP_MODE_REPLACE,
+                              req->requestor, req->property,
+                              netatoms[UTF8_STRING], 8,
+                              strlen(xcb->clipboard) + 1, xcb->clipboard);
+          selection_notify.property = req->property;
+        } else if (req->target == netatoms[TARGETS]) {
+          g_debug("Selection Request Targets.");
+          // We currently only support UTF8 from clipboard. So indicate this.
+          targets[0] = netatoms[UTF8_STRING];
+          xcb_change_property(xcb->connection, XCB_PROP_MODE_REPLACE,
+                              req->requestor, req->property, XCB_ATOM_ATOM, 32,
+                              1, targets);
+          selection_notify.property = req->property;
+        }
+      }
+
+      xcb_send_event(xcb->connection,
+                     0, // propagate
+                     req->requestor, XCB_EVENT_MASK_NO_EVENT,
+                     (const char *)&selection_notify);
+      xcb_flush(xcb->connection);
+    }
+  } break;
   case XCB_BUTTON_RELEASE: {
     xcb_button_release_event_t *bre = (xcb_button_release_event_t *)event;
     NkBindingsMouseButton button;
@@ -1235,23 +1371,27 @@ static void main_loop_x11_event_handler_view(xcb_generic_event_t *event) {
   }
   case XCB_KEY_PRESS: {
     xcb_key_press_event_t *xkpe = (xcb_key_press_event_t *)event;
-    gchar *text;
-
-    xcb->last_timestamp = xkpe->time;
-    text = nk_bindings_seat_handle_key_with_modmask(
-        xcb->bindings_seat, NULL, xkpe->state, xkpe->detail,
-        NK_BINDINGS_KEY_STATE_PRESS);
-    if (text != NULL) {
-      rofi_view_handle_text(state, text);
-      g_free(text);
+#ifdef XCB_IMDKIT
+    if (xcb->ic) {
+      g_log("IMDKit", G_LOG_LEVEL_DEBUG, "input xim");
+      xcb_xim_forward_event(xcb->im, xcb->ic, xkpe);
+    } else
+#endif
+    {
+      rofi_key_press_event_handler(xkpe, state);
     }
     break;
   }
   case XCB_KEY_RELEASE: {
     xcb_key_release_event_t *xkre = (xcb_key_release_event_t *)event;
-    xcb->last_timestamp = xkre->time;
-    nk_bindings_seat_handle_key(xcb->bindings_seat, NULL, xkre->detail,
-                                NK_BINDINGS_KEY_STATE_RELEASE);
+#ifdef XCB_IMDKIT
+    if (xcb->ic) {
+      xcb_xim_forward_event(xcb->im, xcb->ic, xkre);
+    } else
+#endif
+    {
+      rofi_key_release_event_handler(xkre, state);
+    }
     break;
   }
   default:
@@ -1259,6 +1399,25 @@ static void main_loop_x11_event_handler_view(xcb_generic_event_t *event) {
   }
   rofi_view_maybe_update(state);
 }
+
+#ifdef XCB_IMDKIT
+void x11_event_handler_fowarding(G_GNUC_UNUSED xcb_xim_t *im,
+                                 G_GNUC_UNUSED xcb_xic_t ic,
+                                 xcb_key_press_event_t *event,
+                                 G_GNUC_UNUSED void *user_data) {
+  RofiViewState *state = rofi_view_get_active();
+  if (state == NULL) {
+    return;
+  }
+  uint8_t type = event->response_type & ~0x80;
+  if (type == XCB_KEY_PRESS) {
+    rofi_key_press_event_handler(event, state);
+  } else if (type == XCB_KEY_RELEASE) {
+    xcb_key_release_event_t *xkre = (xcb_key_release_event_t *)event;
+    rofi_key_release_event_handler(xkre, state);
+  }
+}
+#endif
 
 static gboolean main_loop_x11_event_handler(xcb_generic_event_t *ev,
                                             G_GNUC_UNUSED gpointer user_data) {
@@ -1269,9 +1428,19 @@ static gboolean main_loop_x11_event_handler(xcb_generic_event_t *ev,
       g_main_loop_quit(xcb->main_loop);
       return G_SOURCE_REMOVE;
     }
-    g_warning("main_loop_x11_event_handler: ev == NULL, status == %d", status);
+    // DD: it seems this handler often gets dispatched while the queue in GWater
+    // is empty. resulting in a NULL for ev. This seems not an error.
+    // g_warning("main_loop_x11_event_handler: ev == NULL, status == %d",
+    // status);
     return G_SOURCE_CONTINUE;
   }
+
+#ifdef XCB_IMDKIT
+  if (xcb->im && xcb_xim_filter_event(xcb->im, ev)) {
+    return G_SOURCE_CONTINUE;
+  }
+#endif
+
   uint8_t type = ev->response_type & ~0x80;
   if (type == xcb->xkb.first_event) {
     switch (ev->pad0) {
@@ -1301,6 +1470,7 @@ static gboolean main_loop_x11_event_handler(xcb_generic_event_t *ev,
   if (xcb->sndisplay != NULL) {
     sn_xcb_display_process_event(xcb->sndisplay, ev);
   }
+
   main_loop_x11_event_handler_view(ev);
   return G_SOURCE_CONTINUE;
 }
@@ -1468,6 +1638,9 @@ gboolean display_setup(GMainLoop *main_loop, NkBindings *bindings) {
   find_arg_str("-display", &display_str);
 
   xcb->main_loop = main_loop;
+#ifdef XCB_IMDKIT
+  xcb_compound_text_init();
+#endif
   xcb->source = g_water_xcb_source_new(g_main_loop_get_context(xcb->main_loop),
                                        display_str, &xcb->screen_nbr,
                                        main_loop_x11_event_handler, NULL, NULL);
@@ -1476,6 +1649,16 @@ gboolean display_setup(GMainLoop *main_loop, NkBindings *bindings) {
     return FALSE;
   }
   xcb->connection = g_water_xcb_source_get_connection(xcb->source);
+#ifdef XCB_IMDKIT
+  xcb->im = xcb_xim_create(xcb->connection, xcb->screen_nbr, NULL);
+#endif
+
+#ifdef XCB_IMDKIT
+#ifndef XCB_IMDKIT_1_0_3_LOWER
+  xcb_xim_set_use_compound_text(xcb->im, true);
+  xcb_xim_set_use_utf8_string(xcb->im, true);
+#endif
+#endif
 
   TICK_N("Open Display");
 
@@ -1745,6 +1928,11 @@ void display_cleanup(void) {
   xcb_ewmh_connection_wipe(&(xcb->ewmh));
   xcb_flush(xcb->connection);
   xcb_aux_sync(xcb->connection);
+#ifdef XCB_IMDKIT
+  xcb_xim_close(xcb->im);
+  xcb_xim_destroy(xcb->im);
+  xcb->im = NULL;
+#endif
   g_water_xcb_source_free(xcb->source);
   xcb->source = NULL;
   xcb->connection = NULL;
@@ -1787,4 +1975,8 @@ void x11_set_cursor(xcb_window_t window, X11CursorType type) {
 
   xcb_change_window_attributes(xcb->connection, window, XCB_CW_CURSOR,
                                &(cursors[type]));
+}
+void xcb_stuff_set_clipboard(char *data) {
+  g_free(xcb->clipboard);
+  xcb->clipboard = data;
 }

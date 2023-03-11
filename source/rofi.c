@@ -3,7 +3,7 @@
  *
  * MIT/X11 License
  * Copyright © 2012 Sean Pringle <sean.pringle@gmail.com>
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -36,6 +36,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sysexits.h>
 #include <time.h>
@@ -84,6 +85,8 @@ const char *cache_dir = NULL;
 
 /** List of error messages.*/
 GList *list_of_error_msgs = NULL;
+/** List of warning messages for the user.*/
+GList *list_of_warning_msgs = NULL;
 
 static void rofi_collectmodes_destroy(void);
 void rofi_add_error_message(GString *str) {
@@ -97,6 +100,19 @@ void rofi_clear_error_messages(void) {
     }
     g_list_free(list_of_error_msgs);
     list_of_error_msgs = NULL;
+  }
+}
+void rofi_add_warning_message(GString *str) {
+  list_of_warning_msgs = g_list_append(list_of_warning_msgs, str);
+}
+void rofi_clear_warning_messages(void) {
+  if (list_of_warning_msgs) {
+    for (GList *iter = g_list_first(list_of_warning_msgs); iter != NULL;
+         iter = g_list_next(iter)) {
+      g_string_free((GString *)iter->data, TRUE);
+    }
+    g_list_free(list_of_warning_msgs);
+    list_of_warning_msgs = NULL;
   }
 }
 
@@ -162,6 +178,7 @@ static void teardown(int pfd) {
 
   // Cleanup view
   rofi_view_cleanup();
+
   // Cleanup pid file.
   remove_pid_file(pfd);
 }
@@ -275,6 +292,8 @@ static void print_list_of_modes(int is_term) {
   }
 }
 static void print_main_application_options(int is_term) {
+  print_help_msg("-config", "[file]", "Load an alternative configuration.",
+                 NULL, is_term);
   print_help_msg("-no-config", "",
                  "Do not load configuration, use default values.", NULL,
                  is_term);
@@ -309,6 +328,9 @@ static void print_main_application_options(int is_term) {
   print_help_msg("-dump-theme", "",
                  "Dump the current theme in rasi format and exit.", NULL,
                  is_term);
+  print_help_msg("-list-keybindings", "",
+                 "Print a list of current keybindings and exit.", NULL,
+                 is_term);
 }
 static void help(G_GNUC_UNUSED int argc, char **argv) {
   int is_term = isatty(fileno(stdout));
@@ -326,7 +348,11 @@ static void help(G_GNUC_UNUSED int argc, char **argv) {
   printf("Detected modes:\n");
   print_list_of_modes(is_term);
   printf("\n");
+  printf("Detected user scripts:\n");
+  script_user_list(is_term);
+  printf("\n");
   printf("Compile time options:\n");
+  printf("\t• Pango   version %s\n", pango_version_string());
 #ifdef WINDOW_MODE
   printf("\t• window  %senabled%s\n", is_term ? color_green : "",
          is_term ? color_reset : "");
@@ -353,6 +379,13 @@ static void help(G_GNUC_UNUSED int argc, char **argv) {
          is_term ? color_reset : "");
 #else
   printf("\t• asan    %sdisabled%s\n", is_term ? color_red : "",
+         is_term ? color_reset : "");
+#endif
+#ifdef XCB_IMDKIT
+  printf("\t• imdkit  %senabled%s\n", is_term ? color_green : "",
+         is_term ? color_reset : "");
+#else
+  printf("\t• imdkit  %sdisabled%s\n", is_term ? color_red : "",
          is_term ? color_reset : "");
 #endif
   printf("\n");
@@ -414,19 +447,18 @@ static void help_print_mode_not_found(const char *mode) {
   rofi_add_error_message(str);
 }
 static void help_print_no_arguments(void) {
-  int is_term = isatty(fileno(stdout));
-  // Daemon mode
-  fprintf(stderr, "Rofi is unsure what to show.\n");
-  fprintf(stderr, "Please specify the mode you want to show.\n\n");
-  fprintf(stderr, "    %srofi%s -show %s{mode}%s\n\n",
-          is_term ? color_bold : "", is_term ? color_reset : "",
-          is_term ? color_green : "", is_term ? color_reset : "");
-  fprintf(stderr, "The following modes are enabled:\n");
+
+  GString *emesg = g_string_new(
+      "<span size=\"x-large\">Rofi is unsure what to show.</span>\n\n");
+  g_string_append(emesg, "Please specify the mode you want to show.\n\n");
+  g_string_append(
+      emesg, "    <b>rofi</b> -show <span color=\"green\">{mode}</span>\n\n");
+  g_string_append(emesg, "The following modes are enabled:\n");
   for (unsigned int j = 0; j < num_modes; j++) {
-    fprintf(stderr, " * %s%s%s\n", is_term ? color_green : "", modes[j]->name,
-            is_term ? color_reset : "");
+    g_string_append_printf(emesg, "    • <span color=\"green\">%s</span>\n",
+                           modes[j]->name);
   }
-  fprintf(stderr, "\nThe following can be enabled:\n");
+  g_string_append(emesg, "\nThe following modes can be enabled:\n");
   for (unsigned int i = 0; i < num_available_modes; i++) {
     gboolean active = FALSE;
     for (unsigned int j = 0; j < num_modes; j++) {
@@ -436,14 +468,15 @@ static void help_print_no_arguments(void) {
       }
     }
     if (!active) {
-      fprintf(stderr, " * %s%s%s\n", is_term ? color_red : "",
-              available_modes[i]->name, is_term ? color_reset : "");
+      g_string_append_printf(emesg, "    • <span color=\"red\">%s</span>\n",
+                             available_modes[i]->name);
     }
   }
-  fprintf(stderr,
-          "\nTo activate a mode, add it to the list of modes in the %smodes%s "
-          "setting.\n",
-          is_term ? color_green : "", is_term ? color_reset : "");
+  g_string_append(emesg, "\nTo activate a mode, add it to the list in "
+                         "the <span color=\"green\">modes</span> "
+                         "setting.\n");
+  rofi_view_error_dialog(emesg->str, ERROR_MSG_MARKUP);
+  rofi_set_return_code(EXIT_SUCCESS);
 }
 
 /**
@@ -470,12 +503,14 @@ static void cleanup(void) {
   g_free(config_path);
 
   rofi_clear_error_messages();
+  rofi_clear_warning_messages();
 
   if (rofi_theme) {
     rofi_theme_free(rofi_theme);
     rofi_theme = NULL;
   }
   TIMINGS_STOP();
+  script_mode_cleanup();
   rofi_collectmodes_destroy();
   rofi_icon_fetcher_destroy();
 
@@ -588,6 +623,7 @@ static void rofi_collect_modes(void) {
       g_strfreev(paths);
     }
   }
+  script_mode_gather_user_scripts();
 }
 
 /**
@@ -714,6 +750,13 @@ static gboolean startup(G_GNUC_UNUSED gpointer data) {
     show_error_dialog();
     return G_SOURCE_REMOVE;
   }
+  if (list_of_warning_msgs != NULL) {
+    for (GList *iter = g_list_first(list_of_warning_msgs); iter != NULL;
+         iter = g_list_next(iter)) {
+      fputs(((GString *)iter->data)->str, stderr);
+      fputs("\n", stderr);
+    }
+  }
   // Dmenu mode.
   if (dmenu_mode == TRUE) {
     // force off sidebar mode:
@@ -755,15 +798,28 @@ static gboolean startup(G_GNUC_UNUSED gpointer data) {
   } else {
     help_print_no_arguments();
 
-    g_main_loop_quit(main_loop);
+    // g_main_loop_quit(main_loop);
   }
 
   return G_SOURCE_REMOVE;
 }
 
+static gboolean take_screenshot_quit ( G_GNUC_UNUSED void *data)
+{
+  rofi_capture_screenshot();
+  rofi_quit_main_loop();
+  return G_SOURCE_REMOVE;
+}
 static gboolean record(G_GNUC_UNUSED void *data) {
   rofi_capture_screenshot();
   return G_SOURCE_CONTINUE;
+}
+static void rofi_custom_log_function(const char *log_domain,
+                                     G_GNUC_UNUSED GLogLevelFlags log_level,
+                                     const gchar *message, gpointer user_data) {
+  int fp = GPOINTER_TO_INT(user_data);
+  dprintf(fp, "[%s]: %s\n", log_domain == NULL ? "default" : log_domain,
+          message);
 }
 /**
  * @param argc number of input arguments.
@@ -774,9 +830,26 @@ static gboolean record(G_GNUC_UNUSED void *data) {
  * @returns return code of rofi.
  */
 int main(int argc, char *argv[]) {
-  TIMINGS_START();
-
   cmd_set_arguments(argc, argv);
+  if (find_arg("-log") >= 0) {
+    char *logfile = NULL;
+    find_arg_str("-log", &logfile);
+    if (logfile != NULL) {
+      int fp = open(logfile, O_CLOEXEC | O_APPEND | O_CREAT | O_WRONLY,
+                    S_IRUSR | S_IWUSR);
+      if (fp != -1) {
+        g_log_set_default_handler(rofi_custom_log_function,
+                                  GINT_TO_POINTER(fp));
+
+      } else {
+        g_error("Failed to open logfile '%s': %s.", logfile, strerror(errno));
+      }
+
+    } else {
+      g_warning("Option '-log' should pass in a filename.");
+    }
+  }
+  TIMINGS_START();
 
   // Version
   if (find_arg("-v") >= 0 || find_arg("-version") >= 0) {
@@ -961,6 +1034,11 @@ int main(int argc, char *argv[]) {
     // This might clear existing errors.
     config_parse_cmd_options();
   }
+
+  if (rofi_theme == NULL || rofi_theme->num_widgets == 0) {
+    g_warning("Failed to load theme. Try to load default: ");
+    rofi_theme_parse_string("@theme \"default\"");
+  }
   TICK_N("Load cmd config ");
 
   // Get the path to the cache dir.
@@ -1033,10 +1111,18 @@ int main(int argc, char *argv[]) {
     cleanup();
     return EXIT_SUCCESS;
   }
+  if (find_arg("-list-keybindings") >= 0) {
+    int is_term = isatty(fileno(stdout));
+    abe_list_all_bindings(is_term);
+    return EXIT_SUCCESS;
+  }
 
   unsigned int interval = 1;
   if (find_arg_uint("-record-screenshots", &interval)) {
     g_timeout_add((guint)(1000 / (double)interval), record, NULL);
+  }
+  if ( find_arg_uint("-take-screenshot-quit", &interval)) {
+    g_timeout_add(interval, take_screenshot_quit, NULL);
   }
   if (find_arg("-benchmark-ui") >= 0) {
     config.benchmark_ui = TRUE;
@@ -1093,11 +1179,16 @@ extern GList *list_of_error_msgs;
 int rofi_theme_rasi_validate(const char *filename) {
   rofi_theme_parse_file(filename);
   rofi_theme_parse_process_links();
-  if (list_of_error_msgs == NULL) {
+  if (list_of_error_msgs == NULL && list_of_warning_msgs == NULL) {
     return EXIT_SUCCESS;
   }
 
   for (GList *iter = g_list_first(list_of_error_msgs); iter != NULL;
+       iter = g_list_next(iter)) {
+    fputs(((GString *)iter->data)->str, stderr);
+    fputs("\n", stderr);
+  }
+  for (GList *iter = g_list_first(list_of_warning_msgs); iter != NULL;
        iter = g_list_next(iter)) {
     fputs(((GString *)iter->data)->str, stderr);
     fputs("\n", stderr);

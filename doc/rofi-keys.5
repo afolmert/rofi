@@ -81,6 +81,21 @@ configuration {
 .fi
 .RE
 
+.SH Unsetting a binding
+.PP
+To unset a binding, pass an empty string.
+
+.PP
+.RS
+
+.nf
+configuration {
+  kb-clear-line: "";
+}
+
+.fi
+.RE
+
 .SH Keyboard Bindings
 .SS \fBkb-primary-paste\fP:
 .PP
@@ -95,6 +110,13 @@ Paste clipboard
 
 .PP
 \fBDefault\fP: 	Control+v,Insert
+
+.SS \fBkb-secondary-copy\fP
+.PP
+Copy current selection to clipboard
+
+.PP
+\fBDefault\fP: 	Control+c
 
 .SS \fBkb-clear-line\fP
 .PP
@@ -564,6 +586,20 @@ Select row 10
 
 .PP
 \fBDefault\fP: 	Super+0
+
+.SS \fBkb-entry-history-up\fP
+.PP
+Go up in the entry history.
+
+.PP
+\fBDefault\fP:    Control+Up
+
+.SS \fBkb-entry-history-down\fP
+.PP
+Go down in the entry history.
+
+.PP
+\fBDefault\fP:    Control+Down
 
 .SH Mouse Bindings
 .SS \fBml-row-left\fP

@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -46,18 +46,27 @@
 #include "widgets/textbox.h"
 #include <gio/gio.h>
 
+/**
+ * list of config files we parsed.
+ */
 GList *parsed_config_files = NULL;
 
+/** cleanup (free) the list of parsed config files. */
 void rofi_theme_free_parsed_files(void) {
   g_list_free_full(parsed_config_files, g_free);
   parsed_config_files = NULL;
 }
 
+/**
+ * @param is_term if print to terminal
+ *
+ * print the list of parsed config files.
+ */
 void rofi_theme_print_parsed_files(gboolean is_term) {
   printf("\nParsed files:\n");
   for (GList *iter = g_list_first(parsed_config_files); iter != NULL;
        iter = g_list_next(iter)) {
-    printf("\t\u2022 %s%s%s\n", is_term ? color_bold : "",
+    printf("\t\u2023 %s%s%s\n", is_term ? color_bold : "",
            (const char *)(iter->data), is_term ? color_reset : "");
   }
   printf("\n");
@@ -120,7 +129,8 @@ RofiDistance rofi_theme_property_copy_distance(RofiDistance const distance) {
   return retv;
 }
 
-Property *rofi_theme_property_copy(const Property *p) {
+Property *rofi_theme_property_copy(const Property *p,
+                                   G_GNUC_UNUSED void *data) {
   Property *retv = rofi_theme_property_create(p->type);
   retv->name = g_strdup(p->name);
 
@@ -137,7 +147,7 @@ Property *rofi_theme_property_copy(const Property *p) {
     retv->value.link.ref = NULL;
     if (p->value.link.def_value) {
       retv->value.link.def_value =
-          rofi_theme_property_copy(p->value.link.def_value);
+          rofi_theme_property_copy(p->value.link.def_value, NULL);
     }
     break;
   case P_PADDING: {
@@ -275,7 +285,7 @@ static void rofi_theme_print_distance_unit(RofiDistanceUnit *unit) {
   } else if (unit->modtype == ROFI_DISTANCE_MODIFIER_MULTIPLY) {
     fputs(" * ", stdout);
   } else if (unit->modtype == ROFI_DISTANCE_MODIFIER_MODULO) {
-    fputs(" % ", stdout);
+    fputs(" modulo ", stdout);
   } else if (unit->modtype == ROFI_DISTANCE_MODIFIER_MIN) {
     fputs(" min ", stdout);
   } else if (unit->modtype == ROFI_DISTANCE_MODIFIER_MAX) {
@@ -384,6 +394,15 @@ static void int_rofi_theme_print_property(Property *p) {
     }
     if (p->value.highlight.style & ROFI_HL_ITALIC) {
       printf("italic ");
+    }
+    if (p->value.highlight.style & ROFI_HL_UPPERCASE) {
+      printf("uppercase ");
+    }
+    if (p->value.highlight.style & ROFI_HL_LOWERCASE) {
+      printf("lowercase ");
+    }
+    if (p->value.highlight.style & ROFI_HL_CAPITALIZE) {
+      printf("capitalize ");
     }
     if (p->value.highlight.style & ROFI_HL_COLOR) {
       rofi_theme_print_color(p->value.highlight.color);
@@ -635,7 +654,7 @@ void yyerror(YYLTYPE *yylloc, const char *what, const char *s) {
 static void rofi_theme_copy_property_int(G_GNUC_UNUSED gpointer key,
                                          gpointer value, gpointer user_data) {
   GHashTable *table = (GHashTable *)user_data;
-  Property *p = rofi_theme_property_copy((Property *)value);
+  Property *p = rofi_theme_property_copy((Property *)value, NULL);
   g_hash_table_replace(table, p->name, p);
 }
 void rofi_theme_widget_add_properties(ThemeWidget *widget, GHashTable *table) {
@@ -1317,8 +1336,8 @@ RofiHighlightColorStyle rofi_theme_get_highlight(widget *widget,
   }
   return rofi_theme_get_highlight_inside(p, widget, property, th);
 }
-static int get_pixels(RofiDistanceUnit *unit, RofiOrientation ori) {
-  int val = unit->distance;
+static double get_pixels(RofiDistanceUnit *unit, RofiOrientation ori) {
+  double val = unit->distance;
 
   if (unit->type == ROFI_PU_EM) {
     val = unit->distance * textbox_get_estimated_char_height();
@@ -1340,7 +1359,7 @@ static int get_pixels(RofiDistanceUnit *unit, RofiOrientation ori) {
   return val;
 }
 
-static int distance_unit_get_pixel(RofiDistanceUnit *unit,
+static double distance_unit_get_pixel(RofiDistanceUnit *unit,
                                    RofiOrientation ori) {
   switch (unit->modtype) {
   case ROFI_DISTANCE_MODIFIER_GROUP:
@@ -1356,45 +1375,45 @@ static int distance_unit_get_pixel(RofiDistanceUnit *unit,
     return distance_unit_get_pixel(unit->left, ori) *
            distance_unit_get_pixel(unit->right, ori);
   case ROFI_DISTANCE_MODIFIER_DIVIDE: {
-    int a = distance_unit_get_pixel(unit->left, ori);
-    int b = distance_unit_get_pixel(unit->right, ori);
+    double a = distance_unit_get_pixel(unit->left, ori);
+    double b = distance_unit_get_pixel(unit->right, ori);
     if (b != 0) {
       return a / b;
     }
     return a;
   }
   case ROFI_DISTANCE_MODIFIER_MODULO: {
-    int a = distance_unit_get_pixel(unit->left, ori);
-    int b = distance_unit_get_pixel(unit->right, ori);
+    double a = distance_unit_get_pixel(unit->left, ori);
+    double b = distance_unit_get_pixel(unit->right, ori);
     if (b != 0) {
-      return a % b;
+      return fmod(a, b);
     }
     return 0;
   }
   case ROFI_DISTANCE_MODIFIER_MIN: {
-    int a = distance_unit_get_pixel(unit->left, ori);
-    int b = distance_unit_get_pixel(unit->right, ori);
+    double a = distance_unit_get_pixel(unit->left, ori);
+    double b = distance_unit_get_pixel(unit->right, ori);
     return MIN(a, b);
   }
   case ROFI_DISTANCE_MODIFIER_MAX: {
-    int a = distance_unit_get_pixel(unit->left, ori);
-    int b = distance_unit_get_pixel(unit->right, ori);
+    double a = distance_unit_get_pixel(unit->left, ori);
+    double b = distance_unit_get_pixel(unit->right, ori);
     return MAX(a, b);
   }
   case ROFI_DISTANCE_MODIFIER_ROUND: {
     double a = (double)distance_unit_get_pixel(unit->left, ori);
     double b = (double)distance_unit_get_pixel(unit->right, ori);
-    return (int)(round(a / b) * b);
+    return (double)(round(a / b) * b);
   }
   case ROFI_DISTANCE_MODIFIER_CEIL: {
     double a = (double)distance_unit_get_pixel(unit->left, ori);
     double b = (double)distance_unit_get_pixel(unit->right, ori);
-    return (int)(ceil(a / b) * b);
+    return (double)(ceil(a / b) * b);
   }
   case ROFI_DISTANCE_MODIFIER_FLOOR: {
     double a = (double)distance_unit_get_pixel(unit->left, ori);
     double b = (double)distance_unit_get_pixel(unit->right, ori);
-    return (int)(floor(a / b) * b);
+    return (double)(floor(a / b) * b);
   }
   default:
     break;
@@ -1532,6 +1551,15 @@ static void rofi_theme_parse_process_conditionals_int(workarea mon,
         }
         break;
       }
+      case THEME_MEDIA_TYPE_BOOLEAN: {
+        if (widget->media->boolv) {
+          for (unsigned int x = 0; x < widget->num_widgets; x++) {
+            rofi_theme_parse_merge_widgets(rwidget, widget->widgets[x]);
+          }
+        }
+        break;
+      }
+
       default: {
         break;
       }
@@ -1578,11 +1606,13 @@ static void rofi_theme_parse_process_links_int(ThemeWidget *wid) {
           if (pv->value.link.ref == pv) {
             char *n = rofi_theme_widget_get_name(widget);
             GString *str = g_string_new(NULL);
-            g_string_printf(
-                str, "Failed to resolve variable '%s' in: `%s { %s: var(%s);}`",
-                pv->value.link.name, n, pv->name, pv->value.link.name);
+            g_string_printf(str,
+                            "Validating the theme failed: the variable '%s' in "
+                            "`%s { %s: var(%s);}` failed to resolve.",
+                            pv->value.link.name, n, pv->name,
+                            pv->value.link.name);
 
-            rofi_add_error_message(str);
+            rofi_add_warning_message(str);
             g_free(n);
           }
         }
@@ -1622,6 +1652,9 @@ ThemeMediaType rofi_theme_parse_media_type(const char *type) {
   }
   if (g_strcmp0(type, "max-aspect-ratio") == 0) {
     return THEME_MEDIA_TYPE_MAX_ASPECT_RATIO;
+  }
+  if (g_strcmp0(type, "enabled") == 0) {
+    return THEME_MEDIA_TYPE_BOOLEAN;
   }
   return THEME_MEDIA_TYPE_INVALID;
 }

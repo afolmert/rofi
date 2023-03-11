@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -27,9 +27,10 @@
 
 /** The log domain of this dialog. */
 #define G_LOG_DOMAIN "Modes.DMenu"
+#include "config.h"
 
-#include "modes/dmenu.h"
 #include "helper.h"
+#include "modes/dmenu.h"
 #include "rofi-icon-fetcher.h"
 #include "rofi.h"
 #include "settings.h"
@@ -56,17 +57,18 @@
 static int dmenu_mode_init(Mode *sw);
 static int dmenu_token_match(const Mode *sw, rofi_int_matcher **tokens,
                              unsigned int index);
-static cairo_surface_t *dmenu_get_icon(const Mode *sw,
-                                       unsigned int selected_line, int height);
+static cairo_surface_t *
+dmenu_get_icon(const Mode *sw, unsigned int selected_line, unsigned int height);
 static char *dmenu_get_message(const Mode *sw);
 
-static inline unsigned int bitget(uint32_t *array, unsigned int index) {
+static inline unsigned int bitget(uint32_t const *const array,
+                                  unsigned int index) {
   uint32_t bit = index % 32;
   uint32_t val = array[index / 32];
   return (val >> bit) & 1;
 }
 
-static inline void bittoggle(uint32_t *array, unsigned int index) {
+static inline void bittoggle(uint32_t *const array, unsigned int index) {
   uint32_t bit = index % 32;
   uint32_t *v = &array[index / 32];
   *v ^= 1 << bit;
@@ -106,8 +108,14 @@ typedef struct {
   int pipefd[2];
   int pipefd2[2];
   guint wake_source;
+  gboolean loading;
+
+  char *ballot_selected;
+  char *ballot_unselected;
 } DmenuModePrivateData;
 
+/** Maximum number of lines rofi parses async before it pushes it to the main
+ * thread. */
 #define BLOCK_LINES_SIZE 2048
 typedef struct {
   unsigned int length;
@@ -126,6 +134,7 @@ static void read_add_block(DmenuModePrivateData *pd, Block **block, char *data,
   gsize data_len = len;
   // Init.
   (*block)->values[(*block)->length].icon_fetch_uid = 0;
+  (*block)->values[(*block)->length].icon_fetch_size = 0;
   (*block)->values[(*block)->length].icon_name = NULL;
   (*block)->values[(*block)->length].meta = NULL;
   (*block)->values[(*block)->length].info = NULL;
@@ -155,9 +164,12 @@ static void read_add(DmenuModePrivateData *pd, char *data, gsize len) {
   }
   // Init.
   pd->cmd_list[pd->cmd_list_length].icon_fetch_uid = 0;
+  pd->cmd_list[pd->cmd_list_length].icon_fetch_size = 0;
   pd->cmd_list[pd->cmd_list_length].icon_name = NULL;
   pd->cmd_list[pd->cmd_list_length].meta = NULL;
   pd->cmd_list[pd->cmd_list_length].info = NULL;
+  pd->cmd_list[pd->cmd_list_length].active = FALSE;
+  pd->cmd_list[pd->cmd_list_length].urgent = FALSE;
   pd->cmd_list[pd->cmd_list_length].nonselectable = FALSE;
   char *end = data;
   while (end < data + len && *end != '\0') {
@@ -188,39 +200,53 @@ static gboolean dmenu_async_read_proc(gint fd, GIOCondition condition,
                                       gpointer user_data) {
   DmenuModePrivateData *pd = (DmenuModePrivateData *)user_data;
   char command;
+  // Only interrested in read events.
+  if ((condition & G_IO_IN) != G_IO_IN) {
+    return G_SOURCE_CONTINUE;
+  }
   // Read the entry from the pipe that was used to signal this action.
   if (read(fd, &command, 1) == 1) {
-    Block *block = NULL;
-    gboolean changed = FALSE;
-    // Empty out the AsyncQueue (that is thread safe) from all blocks pushed
-    // into it.
-    while ((block = g_async_queue_try_pop(pd->async_queue)) != NULL) {
+    if (command == 'r') {
+      Block *block = NULL;
+      gboolean changed = FALSE;
+      // Empty out the AsyncQueue (that is thread safe) from all blocks pushed
+      // into it.
+      while ((block = g_async_queue_try_pop(pd->async_queue)) != NULL) {
 
-      if (pd->cmd_list_real_length < (pd->cmd_list_length + block->length)) {
-        pd->cmd_list_real_length = MAX(pd->cmd_list_real_length * 2, 4096);
-        pd->cmd_list = g_realloc(pd->cmd_list, sizeof(DmenuScriptEntry) *
-                                                   pd->cmd_list_real_length);
+        if (pd->cmd_list_real_length < (pd->cmd_list_length + block->length)) {
+          pd->cmd_list_real_length = MAX(pd->cmd_list_real_length * 2, 4096);
+          pd->cmd_list = g_realloc(pd->cmd_list, sizeof(DmenuScriptEntry) *
+                                                     pd->cmd_list_real_length);
+        }
+        memcpy(&(pd->cmd_list[pd->cmd_list_length]), &(block->values[0]),
+               sizeof(DmenuScriptEntry) * block->length);
+        pd->cmd_list_length += block->length;
+        g_free(block);
+        changed = TRUE;
       }
-      memcpy(&(pd->cmd_list[pd->cmd_list_length]), &(block->values[0]),
-             sizeof(DmenuScriptEntry) * block->length);
-      pd->cmd_list_length += block->length;
-      g_free(block);
-      changed = TRUE;
-    }
-    if (changed) {
-      rofi_view_reload();
+      if (changed) {
+        rofi_view_reload();
+      }
+    } else if (command == 'q') {
+      if (pd->loading) {
+        rofi_view_set_overlay(rofi_view_get_active(), NULL);
+      }
     }
   }
   return G_SOURCE_CONTINUE;
 }
 
 static void read_input_sync(DmenuModePrivateData *pd, unsigned int pre_read) {
-  size_t nread = 0;
+  ssize_t nread = 0;
   size_t len = 0;
   char *line = NULL;
   while (pre_read > 0 &&
          (nread = getdelim(&line, &len, pd->separator, pd->fd_file)) != -1) {
-    read_add(pd, line, len);
+    if (line[nread - 1] == pd->separator) {
+      nread--;
+      line[nread] = '\0';
+    }
+    read_add(pd, line, nread);
     pre_read--;
   }
   free(line);
@@ -229,12 +255,13 @@ static void read_input_sync(DmenuModePrivateData *pd, unsigned int pre_read) {
 static gpointer read_input_thread(gpointer userdata) {
   DmenuModePrivateData *pd = (DmenuModePrivateData *)userdata;
   ssize_t nread = 0;
-  size_t len = 0;
+  ssize_t len = 0;
   char *line = NULL;
   // Create the message passing queue to the UI thread.
   pd->async_queue = g_async_queue_new();
   Block *block = NULL;
 
+  GTimer *tim = g_timer_new();
   int fd = pd->fd;
   while (1) {
     // Wait for input from the input or from the main thread.
@@ -266,7 +293,7 @@ static gpointer read_input_thread(gpointer userdata) {
         if (readbytes > 0) {
           nread += readbytes;
           line[nread] = '\0';
-          size_t i = 0;
+          ssize_t i = 0;
           while (i < nread) {
             if (line[i] == pd->separator) {
               line[i] = '\0';
@@ -274,10 +301,14 @@ static gpointer read_input_thread(gpointer userdata) {
               memmove(&line[0], &line[i + 1], nread - (i + 1));
               nread -= (i + 1);
               i = 0;
-              if (block && block->length == BLOCK_LINES_SIZE) {
-                g_async_queue_push(pd->async_queue, block);
-                block = NULL;
-                write(pd->pipefd2[1], "r", 1);
+              if (block) {
+                double elapsed = g_timer_elapsed(tim, NULL);
+                if (elapsed >= 0.1 || block->length == BLOCK_LINES_SIZE) {
+                  g_timer_start(tim);
+                  g_async_queue_push(pd->async_queue, block);
+                  block = NULL;
+                  write(pd->pipefd2[1], "r", 1);
+                }
               }
             } else {
               i++;
@@ -290,6 +321,7 @@ static gpointer read_input_thread(gpointer userdata) {
             read_add_block(pd, &block, line, nread);
           }
           if (block) {
+            g_timer_start(tim);
             g_async_queue_push(pd->async_queue, block);
             block = NULL;
             write(pd->pipefd2[1], "r", 1);
@@ -305,13 +337,16 @@ static gpointer read_input_thread(gpointer userdata) {
         nread = 0;
       }
       if (block) {
+        g_timer_start(tim);
         g_async_queue_push(pd->async_queue, block);
         block = NULL;
         write(pd->pipefd2[1], "r", 1);
       }
     }
   }
+  g_timer_destroy(tim);
   free(line);
+  write(pd->pipefd2[1], "q", 1);
   return NULL;
 }
 
@@ -323,8 +358,17 @@ static unsigned int dmenu_mode_get_num_entries(const Mode *sw) {
 }
 
 static gchar *dmenu_format_output_string(const DmenuModePrivateData *pd,
-                                         const char *input) {
+                                         const char *input,
+                                         const unsigned int index,
+                                         gboolean multi_select) {
   if (pd->columns == NULL) {
+    if (multi_select) {
+      if (pd->selected_list && bitget(pd->selected_list, index) == TRUE) {
+        return g_strdup_printf("%s%s", pd->ballot_selected, input);
+      } else {
+        return g_strdup_printf("%s%s", pd->ballot_unselected, input);
+      }
+    }
     return g_strdup(input);
   }
   char *retv = NULL;
@@ -335,6 +379,14 @@ static gchar *dmenu_format_output_string(const DmenuModePrivateData *pd,
     ;
   }
   GString *str_retv = g_string_new("");
+
+  if (multi_select) {
+    if (pd->selected_list && bitget(pd->selected_list, index) == TRUE) {
+      g_string_append(str_retv, pd->ballot_selected);
+    } else {
+      g_string_append(str_retv, pd->ballot_unselected);
+    }
+  }
   for (uint32_t i = 0; pd->columns && pd->columns[i]; i++) {
     unsigned int index =
         (unsigned int)g_ascii_strtoull(pd->columns[i], NULL, 10);
@@ -364,6 +416,13 @@ static inline unsigned int get_index(unsigned int length, int index) {
   return UINT_MAX;
 }
 
+static char *dmenu_get_completion_data(const Mode *data, unsigned int index) {
+  Mode *sw = (Mode *)data;
+  DmenuModePrivateData *pd = (DmenuModePrivateData *)mode_get_private_data(sw);
+  DmenuScriptEntry *retv = (DmenuScriptEntry *)pd->cmd_list;
+  return dmenu_format_output_string(pd, retv[index].entry, index, FALSE);
+}
+
 static char *get_display_data(const Mode *data, unsigned int index, int *state,
                               G_GNUC_UNUSED GList **list, int get_entry) {
   Mode *sw = (Mode *)data;
@@ -391,8 +450,16 @@ static char *get_display_data(const Mode *data, unsigned int index, int *state,
   if (pd->do_markup) {
     *state |= MARKUP;
   }
+  if ( pd->cmd_list[index].urgent ) {
+    *state |= URGENT;
+  }
+  if ( pd->cmd_list[index].active ) {
+    *state |= ACTIVE;
+  }
   char *my_retv =
-      (get_entry ? dmenu_format_output_string(pd, retv[index].entry) : NULL);
+      (get_entry ? dmenu_format_output_string(pd, retv[index].entry, index,
+                                              pd->multi_select)
+                 : NULL);
   return my_retv;
 }
 
@@ -432,7 +499,7 @@ Mode dmenu_mode = {.name = "dmenu",
                    ._token_match = dmenu_token_match,
                    ._get_display_value = get_display_data,
                    ._get_icon = dmenu_get_icon,
-                   ._get_completion = NULL,
+                   ._get_completion = dmenu_get_completion_data,
                    ._preprocess_input = NULL,
                    ._get_message = dmenu_get_message,
                    .private_data = NULL,
@@ -447,12 +514,17 @@ static int dmenu_mode_init(Mode *sw) {
   DmenuModePrivateData *pd = (DmenuModePrivateData *)mode_get_private_data(sw);
 
   pd->async = TRUE;
+  pd->multi_select = FALSE;
 
   // For now these only work in sync mode.
   if (find_arg("-sync") >= 0 || find_arg("-dump") >= 0 ||
       find_arg("-select") >= 0 || find_arg("-no-custom") >= 0 ||
       find_arg("-only-match") >= 0 || config.auto_select ||
       find_arg("-selected-row") >= 0) {
+    pd->async = FALSE;
+  }
+  if ( find_arg("-multi-select") >= 0 ) {
+    pd->multi_select = TRUE;
     pd->async = FALSE;
   }
 
@@ -546,6 +618,7 @@ static int dmenu_mode_init(Mode *sw) {
         g_unix_fd_add(pd->pipefd2[0], G_IO_IN, dmenu_async_read_proc, pd);
     pd->reading_thread =
         g_thread_new("dmenu-read", (GThreadFunc)read_input_thread, pd);
+    pd->loading = TRUE;
   } else {
     pd->fd_file = stdin;
     str = NULL;
@@ -620,7 +693,8 @@ static char *dmenu_get_message(const Mode *sw) {
   return NULL;
 }
 static cairo_surface_t *dmenu_get_icon(const Mode *sw,
-                                       unsigned int selected_line, int height) {
+                                       unsigned int selected_line,
+                                       unsigned int height) {
   DmenuModePrivateData *pd = (DmenuModePrivateData *)mode_get_private_data(sw);
 
   g_return_val_if_fail(pd->cmd_list != NULL, NULL);
@@ -628,16 +702,45 @@ static cairo_surface_t *dmenu_get_icon(const Mode *sw,
   if (dr->icon_name == NULL) {
     return NULL;
   }
-  if (dr->icon_fetch_uid > 0) {
+  if (dr->icon_fetch_uid > 0 && dr->icon_fetch_size == height) {
     return rofi_icon_fetcher_get(dr->icon_fetch_uid);
   }
   uint32_t uid = dr->icon_fetch_uid =
       rofi_icon_fetcher_query(dr->icon_name, height);
+  dr->icon_fetch_size = height;
 
   return rofi_icon_fetcher_get(uid);
 }
 
-static void dmenu_finish(RofiViewState *state, int retv) {
+static void dmenu_finish(DmenuModePrivateData *pd, RofiViewState *state,
+                         int retv) {
+
+  if (pd->reading_thread) {
+    // Stop listinig to new messages from reading thread.
+    if (pd->wake_source > 0) {
+      g_source_remove(pd->wake_source);
+    }
+    // signal stop.
+    write(pd->pipefd[1], "q", 1);
+    g_thread_join(pd->reading_thread);
+    pd->reading_thread = NULL;
+    /* empty the queue, remove idle callbacks if still pending. */
+    g_async_queue_lock(pd->async_queue);
+    Block *block = NULL;
+    while ((block = g_async_queue_try_pop_unlocked(pd->async_queue)) != NULL) {
+      g_free(block);
+    }
+    g_async_queue_unlock(pd->async_queue);
+    g_async_queue_unref(pd->async_queue);
+    pd->async_queue = NULL;
+    close(pd->pipefd[0]);
+    close(pd->pipefd[1]);
+  }
+  if (pd->fd_file != NULL) {
+    if (pd->fd_file != stdin) {
+      fclose(pd->fd_file);
+    }
+  }
   if (retv == FALSE) {
     rofi_set_return_code(EXIT_FAILURE);
   } else if (retv >= 10) {
@@ -677,32 +780,6 @@ static void dmenu_finalize(RofiViewState *state) {
   DmenuModePrivateData *pd =
       (DmenuModePrivateData *)rofi_view_get_mode(state)->private_data;
 
-  if (pd->reading_thread) {
-    // Stop listinig to new messages from reading thread.
-    if (pd->wake_source > 0) {
-      g_source_remove(pd->wake_source);
-    }
-    // signal stop.
-    write(pd->pipefd[1], "q", 1);
-    g_thread_join(pd->reading_thread);
-    pd->reading_thread = NULL;
-    /* empty the queue, remove idle callbacks if still pending. */
-    g_async_queue_lock(pd->async_queue);
-    Block *block = NULL;
-    while ((block = g_async_queue_try_pop_unlocked(pd->async_queue)) != NULL) {
-      g_free(block);
-    }
-    g_async_queue_unlock(pd->async_queue);
-    g_async_queue_unref(pd->async_queue);
-    pd->async_queue = NULL;
-    close(pd->pipefd[0]);
-    close(pd->pipefd[1]);
-  }
-  if (pd->fd_file != NULL) {
-    if (pd->fd_file != stdin) {
-      fclose(pd->fd_file);
-    }
-  }
   unsigned int cmd_list_length = pd->cmd_list_length;
   DmenuScriptEntry *cmd_list = pd->cmd_list;
 
@@ -725,6 +802,7 @@ static void dmenu_finalize(RofiViewState *state) {
     } else if (pd->selected_line != UINT32_MAX) {
       if ((mretv & MENU_CUSTOM_ACTION) && pd->multi_select) {
         restart = TRUE;
+        pd->loading = FALSE;
         if (pd->selected_list == NULL) {
           pd->selected_list =
               g_malloc0(sizeof(uint32_t) * (pd->cmd_list_length / 32 + 1));
@@ -754,7 +832,7 @@ static void dmenu_finalize(RofiViewState *state) {
           retv = 10 + (mretv & MENU_LOWER_MASK);
         }
         g_free(input);
-        dmenu_finish(state, retv);
+        dmenu_finish(pd, state, retv);
         return;
       } else {
         pd->selected_line = next_pos - 1;
@@ -764,7 +842,7 @@ static void dmenu_finalize(RofiViewState *state) {
     rofi_view_restart(state);
     rofi_view_set_selected_line(state, pd->selected_line);
     if (!restart) {
-      dmenu_finish(state, retv);
+      dmenu_finish(pd, state, retv);
     }
     return;
   }
@@ -820,7 +898,7 @@ static void dmenu_finalize(RofiViewState *state) {
     rofi_view_restart(state);
     rofi_view_set_selected_line(state, pd->selected_line);
   } else {
-    dmenu_finish(state, retv);
+    dmenu_finish(pd, state, retv);
   }
 }
 
@@ -834,11 +912,11 @@ int dmenu_mode_dialog(void) {
   DmenuScriptEntry *cmd_list = pd->cmd_list;
 
   pd->only_selected = FALSE;
-  pd->multi_select = FALSE;
-  if (find_arg("-multi-select") >= 0) {
-    menu_flags = MENU_INDICATOR;
-    pd->multi_select = TRUE;
-  }
+  pd->ballot_selected = "☑ ";
+  pd->ballot_unselected = "☐ ";
+  find_arg_str("-ballot-selected-str", &(pd->ballot_selected));
+  find_arg_str("-ballot-unselected-str", &(pd->ballot_unselected));
+
   if (find_arg("-markup-rows") >= 0) {
     pd->do_markup = TRUE;
   }
@@ -891,10 +969,27 @@ int dmenu_mode_dialog(void) {
       rofi_view_create(&dmenu_mode, input, menu_flags, dmenu_finalize);
 
   if (find_arg("-keep-right") >= 0) {
-    rofi_view_ellipsize_start(state);
+    rofi_view_ellipsize_listview(state, PANGO_ELLIPSIZE_START);
+  }
+  char *ellipsize_mode = NULL;
+  if (find_arg_str("-ellipsize-mode", &ellipsize_mode) >= 0) {
+    if (ellipsize_mode) {
+      if (g_ascii_strcasecmp(ellipsize_mode, "start") == 0) {
+        rofi_view_ellipsize_listview(state, PANGO_ELLIPSIZE_START);
+      } else if (g_ascii_strcasecmp(ellipsize_mode, "middle") == 0) {
+        rofi_view_ellipsize_listview(state, PANGO_ELLIPSIZE_MIDDLE);
+      } else if (g_ascii_strcasecmp(ellipsize_mode, "end") == 0) {
+        rofi_view_ellipsize_listview(state, PANGO_ELLIPSIZE_END);
+      } else {
+        g_warning("Unrecognized ellipsize mode: '%s'", ellipsize_mode);
+      }
+    }
   }
   rofi_view_set_selected_line(state, pd->selected_line);
   rofi_view_set_active(state);
+  if (pd->loading) {
+    rofi_view_set_overlay(state, "Loading.. ");
+  }
 
   return FALSE;
 }
@@ -940,8 +1035,18 @@ void print_dmenu_options(void) {
   print_help_msg("-w", "windowid", "Position over window with X11 windowid.",
                  NULL, is_term);
   print_help_msg("-keep-right", "", "Set ellipsize to end.", NULL, is_term);
-  print_help_msg("--display-columns", "", "Only show the selected columns",
-                 NULL, is_term);
-  print_help_msg("--display-column-separator", "\t",
+  print_help_msg("-display-columns", "", "Only show the selected columns", NULL,
+                 is_term);
+  print_help_msg("-display-column-separator", "\t",
                  "Separator to use to split columns (regex)", NULL, is_term);
+  print_help_msg("-ballot-selected-str", "\t",
+                 "When multi-select is enabled prefix this string when element "
+                 "is selected.",
+                 NULL, is_term);
+  print_help_msg("-ballot-unselected-str", "\t",
+                 "When multi-select is enabled prefix this string when element "
+                 "is not selected.",
+                 NULL, is_term);
+  print_help_msg("-ellipsize-mode", "end",
+                 "Set ellipsize mode(start | middle | end).", NULL, is_term);
 }

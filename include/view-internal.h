@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -106,6 +106,11 @@ struct RofiViewState {
   textbox *tb_total_rows;
   /** filtered rows */
   textbox *tb_filtered_rows;
+
+  /** Extra icon widget that shows the current selected entries text. */
+  textbox *tb_current_entry;
+  /** Extra icon widget that shows the current selected entries icon. */
+  icon *icon_current_entry;
 
   /** Settings of the menu */
   MenuFlags menu_flags;

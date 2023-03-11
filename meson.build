@@ -1,5 +1,5 @@
 project('rofi', 'c',
-    version: '1.7.3-dev',
+    version: '1.7.5-dev',
     meson_version: '>=0.47.0',
     license: [ 'MIT' ],
     default_options: [
@@ -22,6 +22,7 @@ flags = [
     '-Wunreachable-code',
     '-Werror=missing-prototypes',
     '-Wno-inline', # A bit too noisy with Bison…
+    '-Wextra'
 ]
 foreach f : flags
     if c_compiler.has_argument(f)
@@ -29,8 +30,16 @@ foreach f : flags
     endif
 endforeach
 
-plugindir = join_paths(get_option('libdir'), meson.project_name())
-themedir = join_paths(get_option('datadir'), meson.project_name(), 'themes')
+if get_option('b_lto')
+  add_project_arguments('-Werror=odr', language: 'c')
+  add_project_arguments('-Werror=lto-type-mismatch', language: 'c')
+  add_project_arguments('-Werror=strict-aliasing', language: 'c')
+endif
+
+plugindir  = join_paths(get_option('libdir'), meson.project_name())
+themedir   = join_paths(get_option('datadir'), meson.project_name(), 'themes')
+desktop_install_dir = join_paths(get_option('datadir'), 'applications')
+icondir    = join_paths(get_option('datadir'), 'icons','hicolor', 'scalable', 'apps')
 
 glib_min_major=2
 glib_min_minor=40
@@ -71,15 +80,35 @@ deps += [
     dependency('libstartup-notification-1.0'),
 ]
 
+header_conf = configuration_data()
+if get_option('imdkit')
+  imdkit_new  = dependency('xcb-imdkit', version: '>= 1.0.3', required: false)
+  imdkit_old  = dependency('xcb-imdkit', version: '<= 1.0.2', required: false)
+  if imdkit_new.found()
+    deps += imdkit_new
+    header_conf.set('XCB_IMDKIT_1_0_3_LOWER', false)
+    header_conf.set('XCB_IMDKIT', true)
+  elif imdkit_old.found()
+    deps+= imdkit_old
+    header_conf.set('XCB_IMDKIT_1_0_3_LOWER', true)
+    header_conf.set('XCB_IMDKIT', true)
+  else
+    header_conf.set('XCB_IMDKIT_1_0_3_LOWER', false)
+    header_conf.set('XCB_IMDKIT', false)
+  endif
+endif
+
+
 check = dependency('check', version: '>= 0.11.0', required: get_option('check'))
 
-header_conf = configuration_data()
+
+
 header_conf.set_quoted('PACKAGE_NAME', meson.project_name())
 header_conf.set_quoted('PACKAGE_VERSION', meson.project_version())
 header_conf.set_quoted('VERSION', meson.project_version())
 header_conf.set_quoted('GETTEXT_PACKAGE', meson.project_name())
 header_conf.set_quoted('PACKAGE_BUGREPORT', 'https://github.com/davatorium/rofi/')
-header_conf.set_quoted('PACKAGE_URL', 'https://reddit.com/r/qtools/')
+header_conf.set_quoted('PACKAGE_URL', 'https://github.com/davatorium/rofi/discussions')
 
 header_conf.set('_GNU_SOURCE', true)
 
@@ -128,6 +157,16 @@ install_data(
     'script/rofi-sensible-terminal',
     'script/rofi-theme-selector',
     install_dir: join_paths(get_option('prefix'), get_option('bindir'))
+)
+
+install_data(
+  'data/rofi-theme-selector.desktop',
+  'data/rofi.desktop',
+  install_dir: desktop_install_dir
+  )
+install_data(
+  'data/rofi.svg',
+  install_dir: icondir
 )
 
 flex = generator(find_program('flex'),
@@ -244,7 +283,6 @@ install_data(
     'themes/Arc.rasi',
     'themes/Arc-Dark.rasi',
     'themes/DarkBlue.rasi',
-    'themes/Pop-Dark.rasi',
     'themes/Indego.rasi',
     'themes/Monokai.rasi',
     'themes/Paper.rasi',
@@ -255,7 +293,7 @@ install_data(
     'themes/dmenu.rasi',
     'themes/docu.rasi',
     'themes/glue_pro_blue.rasi',
-    'themes/gruvbox-common.rasi',
+    'themes/gruvbox-common.rasinc',
     'themes/gruvbox-dark-hard.rasi',
     'themes/gruvbox-dark-soft.rasi',
     'themes/gruvbox-dark.rasi',
@@ -266,11 +304,15 @@ install_data(
     'themes/paper-float.rasi',
     'themes/purple.rasi',
     'themes/sidebar.rasi',
+    'themes/sidebar-v2.rasi',
     'themes/solarized.rasi',
     'themes/solarized_alternate.rasi',
     'themes/fancy.rasi',
+    'themes/fancy2.rasi',
     'themes/iggy.rasi',
+    'themes/material.rasi',
     'themes/iggy.jpg',
+    'themes/fullscreen-preview.rasi',
     install_dir: themedir
 )
 

@@ -58,12 +58,16 @@ typedef enum {
   ROFI_HL_UNDERLINE = 2,
   /** strikethrough */
   ROFI_HL_STRIKETHROUGH = 16,
-  /** small caps */
-  ROFI_HL_SMALL_CAPS = 32,
   /** italic */
   ROFI_HL_ITALIC = 4,
   /** color */
-  ROFI_HL_COLOR = 8
+  ROFI_HL_COLOR = 8,
+  /** uppercase */
+  ROFI_HL_UPPERCASE = 32,
+  /** lowercase */
+  ROFI_HL_LOWERCASE = 64,
+  /** capitalize */
+  ROFI_HL_CAPITALIZE = 128
 } RofiHighlightStyle;
 
 /** Style of line */
@@ -293,6 +297,57 @@ typedef struct Property {
   PropertyValue value;
 } Property;
 
+/**
+ * Describe the media constraint type.
+ */
+typedef enum {
+  /** Minimum width constraint. */
+  THEME_MEDIA_TYPE_MIN_WIDTH,
+  /** Maximum width constraint. */
+  THEME_MEDIA_TYPE_MAX_WIDTH,
+  /** Minimum height constraint. */
+  THEME_MEDIA_TYPE_MIN_HEIGHT,
+  /** Maximum height constraint. */
+  THEME_MEDIA_TYPE_MAX_HEIGHT,
+  /** Monitor id constraint. */
+  THEME_MEDIA_TYPE_MON_ID,
+  /** Minimum aspect ratio constraint. */
+  THEME_MEDIA_TYPE_MIN_ASPECT_RATIO,
+  /** Maximum aspect ratio constraint. */
+  THEME_MEDIA_TYPE_MAX_ASPECT_RATIO,
+  /** Boolean option for use with env. */
+  THEME_MEDIA_TYPE_BOOLEAN,
+  /** Invalid entry. */
+  THEME_MEDIA_TYPE_INVALID,
+} ThemeMediaType;
+
+/**
+ * Theme Media description.
+ */
+typedef struct ThemeMedia {
+  ThemeMediaType type;
+  double value;
+  gboolean boolv;
+} ThemeMedia;
+
+/**
+ * ThemeWidget.
+ */
+typedef struct ThemeWidget {
+  int set;
+  char *name;
+
+  unsigned int num_widgets;
+  struct ThemeWidget **widgets;
+
+  ThemeMedia *media;
+
+  GHashTable *properties;
+
+  struct ThemeWidget *parent;
+} ThemeWidget;
+
+typedef ThemeWidget ConfigEntry;
 /**
  * Structure to hold a range.
  */

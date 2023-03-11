@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -29,6 +29,9 @@
 #define ROFI_XCB_H
 
 #include <cairo.h>
+#ifdef XCB_IMDKIT
+#include <xcb-imdkit/imclient.h>
+#endif
 #include <xcb/xcb.h>
 
 /**
@@ -40,6 +43,13 @@ typedef struct _xcb_stuff xcb_stuff;
  * Global pointer to xcb_stuff instance.
  */
 extern xcb_stuff *xcb;
+
+/**
+ * @param data String to copy to clipboard.
+ *
+ * copies string to clipboard.
+ */
+void xcb_stuff_set_clipboard(char *data);
 
 /**
  * Get the root window.
@@ -77,9 +87,9 @@ void window_set_atom_prop(xcb_window_t w, xcb_atom_t prop, xcb_atom_t *atoms,
 
 /** Atoms we want to pre-load */
 #define EWMH_ATOMS(X)                                                          \
-  X(_NET_WM_WINDOW_OPACITY), X(I3_SOCKET_PATH), X(UTF8_STRING), X(STRING),     \
-      X(CLIPBOARD), X(WM_WINDOW_ROLE), X(_XROOTPMAP_ID), X(_MOTIF_WM_HINTS),   \
-      X(WM_TAKE_FOCUS), X(ESETROOT_PMAP_ID)
+  X(_NET_WM_WINDOW_OPACITY), X(I3_SOCKET_PATH), X(TARGETS), X(UTF8_STRING),    \
+      X(STRING), X(CLIPBOARD), X(WM_WINDOW_ROLE), X(_XROOTPMAP_ID),            \
+      X(_MOTIF_WM_HINTS), X(WM_TAKE_FOCUS), X(ESETROOT_PMAP_ID)
 
 /** enumeration of the atoms. */
 enum { EWMH_ATOMS(ATOM_ENUM), NUM_NETATOMS };
@@ -218,6 +228,7 @@ extern WindowManagerQuirk current_window_manager;
  * @returns NULL if window was not found, or unmapped, otherwise returns a
  * cairo_surface.
  */
+
 cairo_surface_t *x11_helper_get_screenshot_surface_window(xcb_window_t window,
                                                           int size);
 
@@ -231,4 +242,11 @@ cairo_surface_t *x11_helper_get_screenshot_surface_window(xcb_window_t window,
 void cairo_image_surface_blur(cairo_surface_t *surface, double radius,
                               double deviation);
 
+#ifdef XCB_IMDKIT
+/**
+ * IME Forwarding
+ */
+void x11_event_handler_fowarding(xcb_xim_t *im, xcb_xic_t ic,
+                                 xcb_key_press_event_t *event, void *user_data);
+#endif
 #endif

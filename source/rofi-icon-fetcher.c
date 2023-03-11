@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -81,6 +81,7 @@ typedef struct {
   int wsize;
   int hsize;
   cairo_surface_t *surface;
+  gboolean query_done;
 
   IconFetcherNameEntry *entry;
 } IconFetcherEntry;
@@ -294,12 +295,12 @@ static void rofi_icon_fetcher_worker(thread_state *sdata,
 
   if (g_path_is_absolute(sentry->entry->name)) {
     icon_path = sentry->entry->name;
-  } else if (g_str_has_prefix(sentry->entry->name, "font:")) {
+  } else if (g_str_has_prefix(sentry->entry->name, "<span")) {
     cairo_surface_t *surface = cairo_image_surface_create(
         CAIRO_FORMAT_ARGB32, sentry->wsize, sentry->hsize);
     cairo_t *cr = cairo_create(surface);
     PangoLayout *layout = pango_cairo_create_layout(cr);
-    pango_layout_set_text(layout, &sentry->entry->name[5], -1);
+    pango_layout_set_markup(layout, sentry->entry->name, -1);
 
     int width, height;
     pango_layout_get_size(layout, &width, &height);
@@ -317,6 +318,7 @@ static void rofi_icon_fetcher_worker(thread_state *sdata,
     g_object_unref(layout);
     cairo_destroy(cr);
     sentry->surface = surface;
+    sentry->query_done = TRUE;
     rofi_view_reload();
     return;
 
@@ -330,9 +332,12 @@ static void rofi_icon_fetcher_worker(thread_state *sdata,
 
       const char *ext = g_strrstr(sentry->entry->name, ".");
       if (ext) {
-        icon_path = helper_get_theme_path(sentry->entry->name, ext);
+        const char *exts2[2] = {ext, NULL};
+        icon_path = helper_get_theme_path(sentry->entry->name, exts2);
       }
       if (icon_path == NULL) {
+        sentry->query_done = TRUE;
+        rofi_view_reload();
         return;
       }
     } else {
@@ -344,6 +349,8 @@ static void rofi_icon_fetcher_worker(thread_state *sdata,
 
   const char *suf = strrchr(icon_path, '.');
   if (suf == NULL) {
+    sentry->query_done = TRUE;
+    rofi_view_reload();
     return;
   }
 
@@ -363,6 +370,7 @@ static void rofi_icon_fetcher_worker(thread_state *sdata,
 
   sentry->surface = icon_surf;
   g_free(icon_path_);
+  sentry->query_done = TRUE;
   rofi_view_reload();
 }
 
@@ -391,6 +399,7 @@ uint32_t rofi_icon_fetcher_query_advanced(const char *name, const int wsize,
   sentry->wsize = wsize;
   sentry->hsize = hsize;
   sentry->entry = entry;
+  sentry->query_done = FALSE;
   sentry->surface = NULL;
 
   entry->sizes = g_list_prepend(entry->sizes, sentry);
@@ -446,5 +455,19 @@ cairo_surface_t *rofi_icon_fetcher_get(const uint32_t uid) {
   if (sentry) {
     return sentry->surface;
   }
+  g_warning("Querying an non-existing uid");
   return NULL;
+}
+
+gboolean rofi_icon_fetcher_get_ex(const uint32_t uid,
+                                  cairo_surface_t **surface) {
+  IconFetcherEntry *sentry = g_hash_table_lookup(
+      rofi_icon_fetcher_data->icon_cache_uid, GINT_TO_POINTER(uid));
+  *surface = NULL;
+  if (sentry) {
+    *surface = sentry->surface;
+    return sentry->query_done;
+  }
+  g_warning("Querying an non-existing uid");
+  return FALSE;
 }

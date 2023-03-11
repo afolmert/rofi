@@ -24,11 +24,11 @@ You can also use [Meson](https://mesonbuild.com/) as an alternative.
 
 ### External libraries
 
-*   libpango
+*   libpango >= 1.50
 *   libpangocairo
 *   libcairo
 *   libcairo-xcb
-*   libglib2.0 >= 2.40
+*   libglib2.0 >= 2.68
     *   gmodule-2.0
     *   gio-unix-2.0
 *   libgdk-pixbuf-2.0
@@ -39,6 +39,7 @@ You can also use [Meson](https://mesonbuild.com/) as an alternative.
 *   xcb-util
 *   xcb-util-wm (sometimes split as libxcb-ewmh and libxcb-icccm)
 *   xcb-util-cursor
+*   xcb-imdkit  (optional, 1.0.3 or up preferred)
 
 On debian based systems, the developer packages are in the form of: `<package>-dev` on rpm based
 `<package>-devel`.
@@ -108,11 +109,15 @@ From this point, use the same steps you use for a release.
 ## Options for configure
 
 When you run the configure step there are several options you can configure.
-For Autotools, you can see the full list with `./configure --help`.
-For Meson, before the initial setup, you can see rofi options in `meson_options.txt` and Meson options with `meson setup --help`.
-After the initial setup, use `meson configure build`.
 
-The most useful one to set the installation prefix:
+For Autotools, you can see the full list with `./configure --help`.
+
+For Meson, before the initial setup, you can see rofi options in `meson_options.txt` and Meson options with `meson setup --help`.
+Meson's built-in options can be set using regular command line arguments, like so: `meson setup build --option=value`.
+Rofi-specific options can be set using the `-D` argument, like so: `meson setup build -Doption=value`.
+After the build dir is set up by `meson setup build`, the `meson configure build` command can be used to configure options, by the same means.
+
+The most useful one to set is the installation prefix:
 
     # Autotools
     ../configure --prefix=<installation path>
@@ -179,6 +184,8 @@ can then load the core in GDB.
 > Where the core file is located and what its exact name is different on each distributions. Please consult the
 > relevant documentation.
 
+For more information see the rofi-debugging(5) manpage.
+
 ## Install distribution
 
 ### Debian or Ubuntu
@@ -217,3 +224,9 @@ On both openSUSE Leap and openSUSE Tumbleweed rofi can be installed using:
 ### FreeBSD
 
     sudo pkg install rofi
+
+### macOS
+
+On macOS rofi can be installed via [MacPorts](https://www.macports.org):
+
+    sudo port install rofi

@@ -4,7 +4,7 @@
 .PP
 \fBrofi-theme\fP - Rofi theme format files
 
-.SH GETTING STARTED WITH THEMING
+.SH Getting started with theming
 .PP
 The easiest way to get started theming rofi is by modifying your existing theme.
 
@@ -173,7 +173,7 @@ If you want to center the text relative to the icon, we can set this:
 .RS
 
 .nf
-element-icon {
+element-text {
     vertical-align: 0.5;
 }
 
@@ -197,6 +197,25 @@ element-icon {
 .RE
 
 .PP
+We can also specify the color and width of the cursor. You could, for example,
+create a crimson block cursor like this:
+
+.PP
+.RS
+
+.nf
+entry {
+  cursor-color: rgb(220,20,60);
+  cursor-width: 8px;
+}
+
+.fi
+.RE
+
+.PP
+By default, the \fB\fCcursor-color\fR will be the same as the \fB\fCtext-color\fR\&. The \fB\fCcursor-width\fR will always default to 2 pixels.
+
+.PP
 If you want to see the complete theme, including the modification you can run:
 
 .PP
@@ -208,7 +227,7 @@ rofi -dump-theme
 .fi
 .RE
 
-.SH DEFAULT THEME LOADING
+.SH Default theme loading
 .PP
 By default, rofi loads the default theme. This theme is \fBalways\fP loaded.
 The default configuration contains:
@@ -246,14 +265,14 @@ rofi -no-config -dump-theme
 .fi
 .RE
 
-.SH DESCRIPTION
+.SH Description
 .PP
 The need for a new theme format was motivated by the fact that the way rofi handled widgets has changed. From a very
 static drawing of lines and text to a nice structured form of packing widgets. This change made it possible to provide a
 more flexible theme framework. The old theme format and config file are not flexible enough to expose these options in a
 user-friendly way. Therefore, a new file format has been created, replacing the old one.
 
-.SH FORMAT SPECIFICATION
+.SH Format specification
 .SH Encoding
 .PP
 The encoding of the file is UTF-8. Both unix (\fB\fC\\n\fR) and windows (\fB\fC\\r\\n\fR) newlines format are supported. But unix is
@@ -334,6 +353,7 @@ name
 .PP
 The preferred file extension for the new theme format is \fBrasi\fP\&. This is an
 abbreviation for \fBr\fPofi \fBa\fPdvanced \fBs\fPtyle \fBi\fPnformation.
+If a theme file is split over multiple files, include files can have the: \fBrasinc\fP extension.
 
 .SH Basic Structure
 .PP
@@ -536,7 +556,7 @@ Inherit
 .PP
 Some of these types are a combination of other types.
 
-.SH String
+.SS String
 .RS
 .IP \(bu 2
 Format:  \fB\fC"[:print:]+"\fR
@@ -575,7 +595,7 @@ text {
 .PP
 The following special characters can be escaped: \fB\fC\\b\fR, \fB\fC\\f\fR, \fB\fC\\n\fR, \fB\fC\\r\fR, \fB\fC\\t\fR, \fB\fC\\v\fR, \fB\fC\\\fR and \fB\fC"\fR\&.
 
-.SH Integer
+.SS Integer
 .RS
 .IP \(bu 2
 Format: \fB\fC[-+]?[:digit:]+\fR
@@ -597,7 +617,7 @@ lines: 12;
 .fi
 .RE
 
-.SH Real
+.SS Real
 .RS
 .IP \(bu 2
 Format: \fB\fC[-+]?[:digit:]+(\\.[:digit:]+)?\fR
@@ -622,7 +642,7 @@ real: 3.4;
 .PP
 The following is not valid: \fB\fC\&.3\fR, \fB\fC3.\fR or scientific notation: \fB\fC3.4e-3\fR\&.
 
-.SH Boolean
+.SS Boolean
 .RS
 .IP \(bu 2
 Format: \fB\fC(true|false)\fR
@@ -644,7 +664,7 @@ dynamic: false;
 .fi
 .RE
 
-.SH Image
+.SS Image
 .PP
 \fBrofi\fP support a limited set of background-image formats.
 
@@ -668,7 +688,7 @@ Angle in deg,rad,grad (as used in color).
 .PP
 Where the \fB\fCpath\fR is a string, and \fB\fCstop\fR color is of type color.
 
-.SH Color
+.SS Color
 .PP
 \fBrofi\fP supports the color formats as specified in the CSS standard (1,2,3 and some of CSS 4)
 
@@ -756,7 +776,7 @@ text-color: Black;
 .fi
 .RE
 
-.SH Text style
+.SS Text style
 .RS
 .IP \(bu 2
 Format: \fB\fC(bold|italic|underline|strikethrough|none)\fR
@@ -773,13 +793,34 @@ should be applied.
 .IP \(bu 2
 \fB\fCitalic\fR: put the highlighted text in script type (slanted).
 .IP \(bu 2
-\fB\fCunderline\fR: put a line under the highlighted text.
+\fB\fCunderline\fR: put a line under the text.
 .IP \(bu 2
-\fB\fCstrikethrough\fR: put a line through the highlighted text.
+\fB\fCstrikethrough\fR: put a line through the text.
 
 .RE
 
-.SH Line style
+.PP
+The following options are available on pango 1.50.0 and up:
+
+.RS
+.IP \(bu 2
+\fB\fCuppercase\fR: Uppercase the text.
+.IP \(bu 2
+\fB\fClowercase\fR: Lowercase the text.
+
+.RE
+
+.PP
+The following option is disabled as pango crashes on this if there is eel
+ upsizing or wrapping. This will be re-enabled once fixed:
+
+.RS
+.IP \(bu 2
+\fB\fCcapitalize\fR: Capitalize the text.
+
+.RE
+
+.SS Line style
 .RS
 .IP \(bu 2
 Format: \fB\fC(dash|solid)\fR
@@ -792,7 +833,7 @@ It currently supports:
  * \fB\fCdash\fR:  a dashed line, where the gap is the same width as the dash
  * \fB\fCsolid\fR: a solid line
 
-.SH Distance
+.SS Distance
 .RS
 .IP \(bu 2
 Format: \fB\fC{Integer}px\fR
@@ -869,32 +910,32 @@ It supports the following operations:
 
 .RS
 .IP \(bu 2
-\fB\fC+\fR     : Add
+\fB\fC+\fR      : Add
 .IP \(bu 2
-\fB\fC-\fR     : Subtract
+\fB\fC-\fR      : Subtract
 .IP \(bu 2
-\fB\fC/\fR     : Divide
+\fB\fC/\fR      : Divide
 .IP \(bu 2
-\fB\fC*\fR     : Multiply
+\fB\fC*\fR      : Multiply
 .IP \(bu 2
-\fB\fC%\fR     : Modulo
+\fB\fCmodulo\fR : Modulo
 .IP \(bu 2
-\fB\fCmin\fR   : Minimum of lvalue or rvalue;
+\fB\fCmin\fR    : Minimum of lvalue or rvalue;
 .IP \(bu 2
-\fB\fCmax\fR   : Maximum of lvalue or rvalue;
+\fB\fCmax\fR    : Maximum of lvalue or rvalue;
 .IP \(bu 2
-\fB\fCfloor\fR : Round down lvalue to the next multiple of rvalue
+\fB\fCfloor\fR  : Round down lvalue to the next multiple of rvalue
 .IP \(bu 2
-\fB\fCceil\fR  : Round up lvalue to the next multiple of rvalue
+\fB\fCceil\fR   : Round up lvalue to the next multiple of rvalue
 .IP \(bu 2
-\fB\fCround\fR : Round lvalue to the next multiple of rvalue
+\fB\fCround\fR  : Round lvalue to the next multiple of rvalue
 
 .RE
 
 .PP
 It uses the C precedence ordering.
 
-.SH Padding
+.SS Padding
 .RS
 .IP \(bu 2
 Format: \fB\fC{Integer}\fR
@@ -927,7 +968,7 @@ The different number of fields in the formats are parsed like:
 
 .RE
 
-.SH Border
+.SS Border
 .RS
 .IP \(bu 2
 Format: \fB\fC{Integer}\fR
@@ -962,7 +1003,7 @@ When no unit is specified, pixels are assumed.
 
 .RE
 
-.SH Position
+.SS Position
 .PP
 Indicate a place on the window/monitor.
 
@@ -987,7 +1028,7 @@ Format: \fB\fC(center|east|north|west|south|north east|north west|south west|sou
 
 .RE
 
-.SH Visibility
+.SS Visibility
 .PP
 It is possible to hide widgets:
 
@@ -1002,7 +1043,7 @@ inputbar {
 .fi
 .RE
 
-.SH Reference
+.SS Reference
 .RS
 .IP \(bu 2
 Format: \fB\fC@{PROPERTY NAME}\fR
@@ -1069,7 +1110,7 @@ window {
 If the property \fB\fCwidth\fR is set globally (\fB\fC*{}\fR) that value is used, if the property
 \fB\fCwidth\fR is not set, the default value is used.
 
-.SH Orientation
+.SS Orientation
 .RS
 .IP \(bu 2
 Format: \fB\fC(horizontal|vertical)\fR
@@ -1079,7 +1120,7 @@ Format: \fB\fC(horizontal|vertical)\fR
 .PP
 Specify the orientation of the widget.
 
-.SH Cursor
+.SS Cursor
 .RS
 .IP \(bu 2
 Format: \fB\fC(default|pointer|text)\fR
@@ -1089,7 +1130,7 @@ Format: \fB\fC(default|pointer|text)\fR
 .PP
 Specify the type of mouse cursor that is set when the mouse pointer is over the widget.
 
-.SH List of keywords
+.SS List of keywords
 .RS
 .IP \(bu 2
 Format: \fB\fC[ keyword, keyword ]\fR
@@ -1100,7 +1141,7 @@ Format: \fB\fC[ keyword, keyword ]\fR
 A list starts with a '[' and ends with a ']'. The entries in the list are comma-separated.
 The \fB\fCkeyword\fR in the list refers to an widget name.
 
-.SH List of values
+.SS List of values
 .RS
 .IP \(bu 2
 Format: \fB\fC[ value, value, ... ]\fR
@@ -1110,7 +1151,7 @@ Format: \fB\fC[ value, value, ... ]\fR
 .PP
 An list starts with a '[' and ends with a ']'. The entries in the list are comma-separated.
 
-.SH Environment variable
+.SS Environment variable
 .RS
 .IP \(bu 2
 Format: \fB\fC${:alnum:}\fR
@@ -1157,7 +1198,7 @@ window {
 .PP
 If environment WIDTH is set, then that value is parsed, otherwise the default value (\fB\fC40%\fR).
 
-.SH Inherit
+.SS Inherit
 .RS
 .IP \(bu 2
 Format: \fB\fCinherit\fR
@@ -1178,7 +1219,7 @@ mainbox {
 .fi
 .RE
 
-.SH ELEMENTS PATHS
+.SH Elements paths
 .PP
 Element paths exists of two parts, the first part refers to the actual widget by name.
 Some widgets have an extra state.
@@ -1216,10 +1257,10 @@ element selected {
 .fi
 .RE
 
-.SH SUPPORTED ELEMENT PATH
-.SH Name
+.SS Supported element paths
+.SS Name
 .PP
-The current widgets available in \fBrofi\fP:
+The default widgets available in \fBrofi\fP and the default hierarchic:
 
 .RS
 .IP \(bu 2
@@ -1244,6 +1285,10 @@ The current widgets available in \fBrofi\fP:
 \fB\fCnum-rows\fR: Shows the total number of rows.
 .IP \(bu 2
 \fB\fCnum-filtered-rows\fR: Shows the total number of rows after filtering.
+.IP \(bu 2
+\fB\fCtextbox-current-entry\fR: Shows the text of the currently selected entry.
+.IP \(bu 2
+\fB\fCicon-current-entry\fR: Shows the icon of the currently selected entry.
 
 .RE
 
@@ -1293,7 +1338,7 @@ The current widgets available in \fBrofi\fP:
 Note that these path names match the default theme. Themes that provide a custom layout will have different
 elements, and structure.
 
-.SH State
+.SS State
 .PP
 State: State of widget
 
@@ -1356,11 +1401,11 @@ Note that a state modifies the original element, it therefore contains all the p
 The scrollbar uses the \fB\fChandle\fR state when drawing the small scrollbar handle.
 This allows the colors used for drawing the handle to be set independently.
 
-.SH SUPPORTED PROPERTIES
+.SH Widget properties
 .PP
 The following properties are currently supported:
 
-.SS all widgets:
+.SS all widgets
 .RS
 .IP \(bu 2
 \fBenabled\fP:           enable/disable rendering of the widget
@@ -1391,7 +1436,7 @@ Type of mouse cursor that is set when the mouse pointer is hovered over the widg
 
 .RE
 
-.SS window:
+.SS window
 .RS
 .IP \(bu 2
 \fBfont\fP:            string
@@ -1423,7 +1468,7 @@ The offset of the window to the anchor point, allowing you to push the window le
 
 .RE
 
-.SS scrollbar:
+.SS scrollbar
 .RS
 .IP \(bu 2
 \fBbackground-color\fP:    color
@@ -1436,7 +1481,7 @@ The offset of the window to the anchor point, allowing you to push the window le
 
 .RE
 
-.SS box:
+.SS box
 .RS
 .IP \(bu 2
 \fBorientation\fP:      orientation
@@ -1447,7 +1492,7 @@ The offset of the window to the anchor point, allowing you to push the window le
 
 .RE
 
-.SS textbox:
+.SS textbox
 .RS
 .IP \(bu 2
 \fBbackground-color\fP:  color
@@ -1464,6 +1509,8 @@ The offset of the window to the anchor point, allowing you to push the window le
 .IP \(bu 2
 \fBtext-color\fP:        the text color to use.
 .IP \(bu 2
+\fBtext-transform\fP:    text style {color} for the whole text.
+.IP \(bu 2
 \fBhighlight\fP:         text style {color}.
 color is optional, multiple highlight styles can be added like: bold underline italic #000000;
 This option is only available on the \fB\fCelement-text\fR widget.
@@ -1473,6 +1520,8 @@ This option is only available on the \fB\fCelement-text\fR widget.
 \fBcontent\fP:           Set the displayed text (String).
 .IP \(bu 2
 \fBplaceholder\fP:       Set the displayed text (String) when nothing is entered.
+.IP \(bu 2
+\fBplaceholder-markup\fP:       If true, placeholder text supports pango markup for stylizing.
 .IP \(bu 2
 \fBplaceholder-color\fP: Color of the placeholder text.
 .IP \(bu 2
@@ -1484,10 +1533,26 @@ This option is only available on the \fB\fCelement-text\fR widget.
 Set the location of tab stops by their distance from the beginning of the line.
 Each distance should be greater than the previous one.
 The text appears to the right of the tab stop position (other alignments are not supported yet).
+.IP \(bu 2
+\fBcursor-width\fP:      The width of the cursor.
+.IP \(bu 2
+\fBcursor-color\fP:      The color used to draw the cursor.
+.IP \(bu 2
+\fBcursor-outline\fP:      Enable a border (outline) around the cursor. (Boolean)
+.IP \(bu 2
+\fBcursor-outline-width\fP: The width of the border around the cursor.  (Double)
+.IP \(bu 2
+\fBcursor-outline-color\fP: The color to use for the cursor outline.    (Color)
+.IP \(bu 2
+\fBtext-outline\fP:      Enable a border (outline) around the text. (Boolean)
+.IP \(bu 2
+\fBtext-outline-width\fP: The width of the border around the text.  (Double)
+.IP \(bu 2
+\fBtext-outline-color\fP: The color to use for the text outline.    (Color)
 
 .RE
 
-.SS listview:
+.SS listview
 .RS
 .IP \(bu 2
 \fBcolumns\fP:         integer
@@ -1525,13 +1590,55 @@ The order the elements are layed out.  Vertical is the original 'column' view.
 .IP \(bu 2
 \fBfixed-columns\fP:    boolean
 Do not reduce the number of columns shown when number of visible elements is not enough to fill them all.
+.IP \(bu 2
+\fBrequire-input\fP:    boolean
+Listview requires user input to be unhidden. The list is still present and
+hitting accept will activate the first entry.
+
+.RE
+
+.SH Listview widget
+.PP
+The listview widget is special container widget.
+It has the following fixed children widgets:
+
+.RS
+.IP \(bu 2
+0 or more \fB\fCelement\fR widgets of the type box.
+.IP \(bu 2
+An optional \fB\fCscrollbar\fR widget. This can be enabled using the scrollbar
+property.
 
 .RE
 
 .PP
-Each element is a \fB\fCbox\fR called \fB\fCelement\fR\&. Each \fB\fCelement\fR can contain an \fB\fCelement-icon\fR and \fB\fCelement-text\fR\&.
+These cannot be changed using the \fB\fCchildren\fR property.
 
-.SS listview text highlight:
+.PP
+Each Entry displayed by listview is captured by a \fB\fCbox\fR called \fB\fCelement\fR\&.
+An \fB\fCelement\fR widget can contain the following special child widgets:
+
+.RS
+.IP \(bu 2
+\fB\fCelement-icon\fR: An icon widget showing the icon associated to the entry.
+.IP \(bu 2
+\fB\fCelement-text\fR: A textbox widget showing the text associated to the entry.
+.IP \(bu 2
+\fB\fCelement-index\fR: A textbox widget that shows the shortcut keybinding number.
+
+.RE
+
+.PP
+By default the \fB\fCelement-icon\fR and \fB\fCelement-text\fR child widgets are added to the
+\fB\fCelement\fR\&. This can be modified using the \fB\fCchildren\fR property or the
+\fB\fC[no]-show-icons\fR option.
+
+.PP
+A child added with another name is treated the same as the special widget described
+in the advanced layout
+\[la]#advanced-layout\[ra] section.
+
+.SS listview text highlight
 .PP
 The \fB\fCelement-text\fR widget in the \fB\fClistview\fR is the one used to show the text.
 On this widget set the \fB\fChighlight\fR property (only place this property is used) to change
@@ -1940,7 +2047,7 @@ If both dummy widgets are set to expand, \fB\fCchild\fR will be centered. Depend
 remaining space will be equally divided between both dummy and child widget (expand enabled), or both dummy widgets
 (expand disabled).
 
-.SH DEBUGGING
+.SH Debugging
 .PP
 To get debug information from the parser, run rofi like:
 
@@ -2037,6 +2144,8 @@ It supports the following keys as constraint:
 \fB\fCmax-aspect-ratio\fR:  load when aspect ratio is under value.
 .IP \(bu 2
 \fB\fCmonitor-id\fR:        The monitor id, see rofi -help for id's.
+.IP \(bu 2
+\fB\fCenabled\fR:           Boolean option to enable. Supports environment variable.
 
 .RE
 
@@ -2054,12 +2163,33 @@ It supports the following keys as constraint:
 .fi
 .RE
 
+.PP
+.RS
+
+.nf
+@media ( enabled: env(DO_LIGHT, false ) {
+
+}
+
+.fi
+.RE
+
+.SH Conflicting constraints
+.PP
+It is possible to define conflicting constraints in the theme. These conflicts
+are not explicitly reported. The most common example is forcing a specific
+window size, for example by enabling full-screen mode, having number of lines
+set in the listview and having the listview expand to available space. There is
+clearly a conflict in these 3 constraints. In this case, listview will not
+limit to the number of lines, but tries to fill the available space. It is up
+to the theme designer to make sure the theme handles this correctly.
+
 .SH Font Parsing
 .PP
 Rofi uses pango
-\[la]https://pango.gnome.org/\[ra] for font rendering. The font should be specified in a format that pango
-understands.
-This normally is the font name followed by the font size. For example:
+\[la]https://pango.gnome.org/\[ra] for font rendering. The font should
+be specified in a format that pango understands. This normally is the font name
+followed by the font size. For example:
 
 .PP
 .RS
@@ -2081,6 +2211,107 @@ FontAwesome 22
 
 .fi
 .RE
+
+.PP
+From the pango manpage:
+
+.PP
+The string must have the form
+
+.PP
+\fB\fC\\[FAMILY-LIST] \\[STYLE-OPTIONS] \\[SIZE] \\[VARIATIONS]\fR,
+
+.PP
+where FAMILY-LIST is a comma-separated list of families optionally terminated
+by a comma, STYLE_OPTIONS is a whitespace-separated list of words where each
+word describes one of style, variant, weight, stretch, or gravity, and SIZE is
+a decimal number (size in points) or optionally followed by the unit modifier
+“px” for absolute size. VARIATIONS is a comma-separated list of font variation
+specifications of the form “\fB\fCaxis\fR=value” (the = sign is optional).
+
+.PP
+The following words are understood as styles: "Normal”, “Roman”, “Oblique”,
+“Italic”.
+
+.PP
+The following words are understood as variants: “Small-Caps”, “All-Small-Caps”,
+“Petite-Caps”, “All-Petite-Caps”, “Unicase”, “Title-Caps”.
+
+.PP
+The following words are understood as weights: “Thin”, “Ultra-Light”,
+“Extra-Light”, “Light”, “Semi-Light”, “Demi-Light”, “Book”, “Regular”,
+“Medium”, “Semi-Bold”, “Demi-Bold”, “Bold”, “Ultra-Bold”, “Extra-Bold”,
+“Heavy”, “Black”, “Ultra-Black”, “Extra-Black”.
+
+.PP
+The following words are understood as stretch values: “Ultra-Condensed”,
+“Extra-Condensed”, “Condensed”, “Semi-Condensed”, “Semi-Expanded”, “Expanded”,
+“Extra-Expanded”, “Ultra-Expanded”.
+
+.PP
+The following words are understood as gravity values: “Not-Rotated”, “South”,
+“Upside-Down”, “North”, “Rotated-Left”, “East”, “Rotated-Right”, “West”.
+
+.PP
+Any one of the options may be absent. If FAMILY-LIST is absent, then the
+family_name field of the resulting font description will be initialized to
+NULL. If STYLE-OPTIONS is missing, then all style options will be set to the
+default values. If SIZE is missing, the size in the resulting font description
+will be set to 0.
+
+.PP
+A typical example:
+
+.PP
+"Cantarell Italic Light 15 `wght`=200"
+
+.SH Icon Handling
+.PP
+Rofi supports 3 ways of specifying an icon:
+
+.RS
+.IP \(bu 2
+Filename
+.IP \(bu 2
+icon-name, this is looked up via the icon-theme.
+.IP \(bu 2
+Markup String. It renders a string as an icon.
+
+.RE
+
+.PP
+For the first two options, GdkPixbuf is used to open and render the icons.
+This in general gives support for most required image formats.
+For the string option it uses Pango to render the string. The string needs to
+start with a \fB\fC<span\fR tag, that allows you to set color and font.
+
+.PP
+Markup string:
+
+.PP
+.RS
+
+.nf
+echo -en "testing\\0icon\\x1f<span color='red'>⏻</span>" | ./rofi -dmenu
+
+.fi
+.RE
+
+.PP
+Getting supported icon formats:
+
+.PP
+.RS
+
+.nf
+G_MESSAGES_DEBUG=Helpers.IconFetcher rofi
+
+.fi
+.RE
+
+.PP
+This uses the debug framework and prints out a list of supported image  file
+extensions.
 
 .SH Multiple file handling
 .PP
@@ -2129,7 +2360,7 @@ If a filename is provided, it will try to resolve it in the following order:
 .PP
 A name is resolved as a filename by appending the \fB\fC\&.rasi\fR extension.
 
-.SH EXAMPLES
+.SH Examples
 .PP
 Several examples are installed together with \fBrofi\fP\&. These can be found in \fB\fC{datadir}/rofi/themes/\fR, where
 \fB\fC{datadir}\fR is the install path of \fBrofi\fP data. When installed using a package manager, this is usually: \fB\fC/usr/share/\fR\&.

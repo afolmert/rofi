@@ -3,7 +3,7 @@
  *
  * MIT/X11 License
  * Copyright © 2012 Sean Pringle <sean.pringle@gmail.com>
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -25,13 +25,14 @@
  * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  *
  */
+#include "config.h"
 
-#include "widgets/textbox.h"
 #include "helper-theme.h"
 #include "helper.h"
 #include "keyb.h"
 #include "mode.h"
 #include "view.h"
+#include "widgets/textbox.h"
 #include <ctype.h>
 #include <glib.h>
 #include <math.h>
@@ -39,9 +40,6 @@
 #include <xcb/xcb.h>
 
 #include "theme.h"
-
-/** The space reserved for the DOT when enabling multi-select. */
-#define DOT_OFFSET 15
 
 static void textbox_draw(widget *, cairo_t *);
 static void textbox_free(widget *);
@@ -78,7 +76,6 @@ static void textbox_resize(widget *wid, short w, short h) {
 }
 static int textbox_get_desired_height(widget *wid, const int width) {
   textbox *tb = (textbox *)wid;
-  unsigned int offset = ((tb->flags & TB_INDICATOR) ? DOT_OFFSET : 0);
   if ((tb->flags & TB_AUTOHEIGHT) == 0) {
     return tb->widget.h;
   }
@@ -88,8 +85,7 @@ static int textbox_get_desired_height(widget *wid, const int width) {
   int old_width = pango_layout_get_width(tb->layout);
   pango_layout_set_width(
       tb->layout,
-      PANGO_SCALE *
-          (width - widget_padding_get_padding_width(WIDGET(tb)) - offset));
+      PANGO_SCALE * (width - widget_padding_get_padding_width(WIDGET(tb))));
 
   int height =
       textbox_get_estimated_height(tb, pango_layout_get_line_count(tb->layout));
@@ -232,14 +228,14 @@ textbox *textbox_create(widget *parent, WidgetType type, const char *name,
   const char *placeholder =
       rofi_theme_get_string(WIDGET(tb), "placeholder", NULL);
   if (placeholder) {
-    tb->placeholder = placeholder;
+    if (rofi_theme_get_boolean(WIDGET(tb), "placeholder-markup", FALSE)) {
+      tb->placeholder = g_strdup(placeholder);
+    } else {
+      tb->placeholder = g_markup_escape_text(placeholder, -1);
+    }
   }
   textbox_text(tb, txt ? txt : "");
   textbox_cursor_end(tb);
-
-  // auto height/width modes get handled here
-  textbox_moveresize(tb, tb->widget.x, tb->widget.y, tb->widget.w,
-                     tb->widget.h);
 
   tb->blink_timeout = 0;
   tb->blink = 1;
@@ -254,6 +250,19 @@ textbox *textbox_create(widget *parent, WidgetType type, const char *name,
   tb->yalign = MAX(0, MIN(1.0, tb->yalign));
   tb->xalign = rofi_theme_get_double(WIDGET(tb), "horizontal-align", xalign);
   tb->xalign = MAX(0, MIN(1.0, tb->xalign));
+
+  if (tb->xalign < 0.2) {
+    pango_layout_set_alignment(tb->layout, PANGO_ALIGN_LEFT);
+  } else if (tb->xalign < 0.8) {
+    pango_layout_set_alignment(tb->layout, PANGO_ALIGN_CENTER);
+  } else {
+    pango_layout_set_alignment(tb->layout, PANGO_ALIGN_RIGHT);
+  }
+  // auto height/width modes get handled here
+  // UPDATE: don't autoheight here, as there is no width set.
+  // so no height can be determined and might result into  crash.
+  // textbox_moveresize(tb, tb->widget.x, tb->widget.y, tb->widget.w,
+  //                   tb->widget.h);
 
   return tb;
 }
@@ -306,7 +315,7 @@ static void __textbox_update_pango_text(textbox *tb) {
   pango_layout_set_attributes(tb->layout, NULL);
   if (tb->placeholder && (tb->text == NULL || tb->text[0] == 0)) {
     tb->show_placeholder = TRUE;
-    pango_layout_set_text(tb->layout, tb->placeholder, -1);
+    pango_layout_set_markup(tb->layout, tb->placeholder, -1);
     return;
   }
   tb->show_placeholder = FALSE;
@@ -320,6 +329,15 @@ static void __textbox_update_pango_text(textbox *tb) {
     pango_layout_set_markup(tb->layout, tb->text, -1);
   } else {
     pango_layout_set_text(tb->layout, tb->text, -1);
+  }
+  if (tb->text) {
+    RofiHighlightColorStyle th = {0, {0.0, 0.0, 0.0, 0.0}};
+    th = rofi_theme_get_highlight(WIDGET(tb), "text-transform", th);
+    if (th.style != 0) {
+      PangoAttrList *list = pango_attr_list_new();
+      helper_token_match_set_pango_attr_on_style(list, 0, G_MAXUINT, th);
+      pango_layout_set_attributes(tb->layout, list);
+    }
   }
 }
 const char *textbox_get_visible_text(const textbox *tb) {
@@ -341,6 +359,15 @@ void textbox_set_pango_attributes(textbox *tb, PangoAttrList *list) {
   pango_layout_set_attributes(tb->layout, list);
 }
 
+char *textbox_get_text ( const textbox *tb ) {
+  if ( tb->text == NULL ) {
+    return g_strdup("");
+  }
+  return g_strdup( tb->text );
+}
+int textbox_get_cursor ( const textbox *tb ) {
+  return tb->cursor;
+}
 // set the default text to display
 void textbox_text(textbox *tb, const char *text) {
   if (tb == NULL) {
@@ -378,11 +405,10 @@ void textbox_text(textbox *tb, const char *text) {
 
 // within the parent handled auto width/height modes
 void textbox_moveresize(textbox *tb, int x, int y, int w, int h) {
-  unsigned int offset = ((tb->flags & TB_INDICATOR) ? DOT_OFFSET : 0);
   if (tb->flags & TB_AUTOWIDTH) {
     pango_layout_set_width(tb->layout, -1);
     w = textbox_get_font_width(tb) +
-        widget_padding_get_padding_width(WIDGET(tb)) + offset;
+        widget_padding_get_padding_width(WIDGET(tb));
   } else {
     // set ellipsize
     if ((tb->flags & TB_EDITABLE) == TB_EDITABLE) {
@@ -396,11 +422,9 @@ void textbox_moveresize(textbox *tb, int x, int y, int w, int h) {
 
   if (tb->flags & TB_AUTOHEIGHT) {
     // Width determines height!
-    int tw = MAX(1, w);
-    pango_layout_set_width(
-        tb->layout,
-        PANGO_SCALE *
-            (tw - widget_padding_get_padding_width(WIDGET(tb)) - offset));
+    int padding = widget_padding_get_padding_width(WIDGET(tb));
+    int tw = MAX(1 + padding, w);
+    pango_layout_set_width(tb->layout, PANGO_SCALE * (tw - padding));
     int hd = textbox_get_height(tb);
     h = MAX(hd, h);
   }
@@ -415,9 +439,8 @@ void textbox_moveresize(textbox *tb, int x, int y, int w, int h) {
 
   // We always want to update this
   pango_layout_set_width(
-      tb->layout,
-      PANGO_SCALE * (tb->widget.w -
-                     widget_padding_get_padding_width(WIDGET(tb)) - offset));
+      tb->layout, PANGO_SCALE * (tb->widget.w -
+                                 widget_padding_get_padding_width(WIDGET(tb))));
   widget_queue_redraw(WIDGET(tb));
 }
 
@@ -433,6 +456,7 @@ static void textbox_free(widget *wid) {
   }
   g_free(tb->text);
 
+  g_free(tb->placeholder);
   if (tb->layout != NULL) {
     g_object_unref(tb->layout);
   }
@@ -445,14 +469,14 @@ static void textbox_draw(widget *wid, cairo_t *draw) {
     return;
   }
   textbox *tb = (textbox *)wid;
-  unsigned int dot_offset = ((tb->flags & TB_INDICATOR) ? DOT_OFFSET : 0);
+  int dot_offset = 0;
 
   if (tb->changed) {
     __textbox_update_pango_text(tb);
   }
 
   // Skip the side MARGIN on the X axis.
-  int x = widget_padding_get_left(WIDGET(tb));
+  int x;
   int top = widget_padding_get_top(WIDGET(tb));
   int y = (pango_font_metrics_get_ascent(tb->tbfc->metrics) -
            pango_layout_get_baseline(tb->layout)) /
@@ -467,33 +491,41 @@ static void textbox_draw(widget *wid, cairo_t *draw) {
   }
   y += top;
 
-  x += dot_offset;
-
-  if (tb->xalign > 0.001) {
-    int rem =
-        MAX(0, tb->widget.w - widget_padding_get_padding_width(WIDGET(tb)) -
-                   line_width);
-    x = tb->xalign * rem + widget_padding_get_left(WIDGET(tb));
-  }
   // TODO check if this is still needed after flatning.
   cairo_set_operator(draw, CAIRO_OPERATOR_OVER);
   cairo_set_source_rgb(draw, 0.0, 0.0, 0.0);
+  // use text color as fallback for themes that don't specify the cursor color
   rofi_theme_get_color(WIDGET(tb), "text-color", draw);
 
-  if (tb->show_placeholder) {
-    rofi_theme_get_color(WIDGET(tb), "placeholder-color", draw);
-  }
   // Set ARGB
   // We need to set over, otherwise subpixel hinting wont work.
-  cairo_move_to(draw, x, top);
-  cairo_save(draw);
-  cairo_reset_clip(draw);
-  pango_cairo_show_layout(draw, tb->layout);
-  cairo_restore(draw);
+  switch (pango_layout_get_alignment(tb->layout)) {
+  case PANGO_ALIGN_CENTER: {
+    int rem =
+        MAX(0, tb->widget.w - widget_padding_get_padding_width(WIDGET(tb)) -
+                   line_width - dot_offset);
+    x = (tb->xalign - 0.5) * rem + widget_padding_get_left(WIDGET(tb));
+    break;
+  }
+  case PANGO_ALIGN_RIGHT: {
+    int rem =
+        MAX(0, tb->widget.w - widget_padding_get_padding_width(WIDGET(tb)) -
+                   line_width - dot_offset);
+    x = -(1.0 - tb->xalign) * rem + widget_padding_get_left(WIDGET(tb));
+    break;
+  }
+  default: {
+    int rem =
+        MAX(0, tb->widget.w - widget_padding_get_padding_width(WIDGET(tb)) -
+                   line_width - dot_offset);
+    x = tb->xalign * rem + widget_padding_get_left(WIDGET(tb));
+    x += dot_offset;
+    break;
+  }
+  }
 
   // draw the cursor
-  rofi_theme_get_color(WIDGET(tb), "text-color", draw);
-  if (tb->flags & TB_EDITABLE && tb->blink) {
+  if (tb->flags & TB_EDITABLE) {
     // We want to place the cursor based on the text shown.
     const char *text = pango_layout_get_text(tb->layout);
     // Clamp the position, should not be needed, but we are paranoid.
@@ -505,16 +537,55 @@ static void textbox_draw(widget *wid, cairo_t *draw) {
     int cursor_x = pos.x / PANGO_SCALE;
     int cursor_y = pos.y / PANGO_SCALE;
     int cursor_height = pos.height / PANGO_SCALE;
-    int cursor_width = 2;
-    cairo_rectangle(draw, x + cursor_x, y + cursor_y, cursor_width,
-                    cursor_height);
-    cairo_fill(draw);
+    RofiDistance cursor_width =
+        rofi_theme_get_distance(WIDGET(tb), "cursor-width", 2);
+    int cursor_pixel_width =
+        distance_get_pixel(cursor_width, ROFI_ORIENTATION_HORIZONTAL);
+    if ((x + cursor_x) != tb->cursor_x_pos) {
+      tb->cursor_x_pos = x + cursor_x;
+    }
+    if ( tb->blink) {
+      // use text color as fallback for themes that don't specify the cursor
+      // color
+      rofi_theme_get_color(WIDGET(tb), "cursor-color", draw);
+      cairo_rectangle(draw, x + cursor_x, y + cursor_y, cursor_pixel_width,
+          cursor_height);
+      if (rofi_theme_get_boolean(WIDGET(tb), "cursor-outline", FALSE)) {
+        cairo_fill_preserve(draw);
+        rofi_theme_get_color(WIDGET(tb), "cursor-outline-color", draw);
+        double width =
+            rofi_theme_get_double(WIDGET(tb), "cursor-outline-width", 0.5);
+        cairo_set_line_width(draw, width);
+        cairo_stroke(draw);
+      } else {
+        cairo_fill(draw);
+      }
+    }
   }
 
-  if ((tb->flags & TB_INDICATOR) == TB_INDICATOR && (tb->tbft & (SELECTED))) {
-    cairo_arc(draw, DOT_OFFSET / 2.0, tb->widget.h / 2.0, 2.0, 0, 2.0 * M_PI);
-    cairo_fill(draw);
+  // draw the text
+  cairo_save(draw);
+  cairo_reset_clip(draw);
+
+  gboolean show_outline =
+      rofi_theme_get_boolean(WIDGET(tb), "text-outline", FALSE);
+  if (tb->show_placeholder) {
+    rofi_theme_get_color(WIDGET(tb), "placeholder-color", draw);
+    show_outline = FALSE;
   }
+  cairo_move_to(draw, x, top);
+  pango_cairo_show_layout(draw, tb->layout);
+
+  if (show_outline) {
+    rofi_theme_get_color(WIDGET(tb), "text-outline-color", draw);
+    double width = rofi_theme_get_double(WIDGET(tb), "text-outline-width", 0.5);
+    cairo_move_to(draw, x, top);
+    pango_cairo_layout_path(draw, tb->layout);
+    cairo_set_line_width(draw, width);
+    cairo_stroke(draw);
+  }
+
+  cairo_restore(draw);
 }
 
 // cursor handling for edit mode
@@ -822,12 +893,21 @@ gboolean textbox_append_text(textbox *tb, const char *pad, const int pad_len) {
   const gchar *w, *n, *e;
   for (w = pad, n = g_utf8_next_char(w), e = w + pad_len; w < e;
        w = n, n = g_utf8_next_char(n)) {
-    if (g_unichar_iscntrl(g_utf8_get_char(w))) {
-      continue;
+    gunichar c = g_utf8_get_char(w);
+    if ( g_unichar_isspace(c)){
+      /** Replace tabs, newlines and others with a normal space. */
+      textbox_insert(tb, tb->cursor, " ", 1);
+      textbox_cursor(tb, tb->cursor + 1);
+      used_something = TRUE;
+    } else if ( g_unichar_iscntrl(c) ){
+      /* skip control characters. */
+      g_info("Got an invalid character: %08X",c);
+    } else  {
+      /** Insert the text */
+      textbox_insert(tb, tb->cursor, w, n - w);
+      textbox_cursor(tb, tb->cursor + 1);
+      used_something = TRUE;
     }
-    textbox_insert(tb, tb->cursor, w, n - w);
-    textbox_cursor(tb, tb->cursor + 1);
-    used_something = TRUE;
   }
   return used_something;
 }
@@ -876,9 +956,7 @@ void textbox_cleanup(void) {
 int textbox_get_width(widget *wid) {
   textbox *tb = (textbox *)wid;
   if (tb->flags & TB_AUTOWIDTH) {
-    unsigned int offset = (tb->flags & TB_INDICATOR) ? DOT_OFFSET : 0;
-    return textbox_get_font_width(tb) + widget_padding_get_padding_width(wid) +
-           offset;
+    return textbox_get_font_width(tb) + widget_padding_get_padding_width(wid);
   }
   return tb->widget.w;
 }
@@ -940,10 +1018,8 @@ int textbox_get_desired_width(widget *wid, G_GNUC_UNUSED const int height) {
     return 0;
   }
   textbox *tb = (textbox *)wid;
-  unsigned int offset = ((tb->flags & TB_INDICATOR) ? DOT_OFFSET : 0);
   if (wid->expand && tb->flags & TB_AUTOWIDTH) {
-    return textbox_get_font_width(tb) + widget_padding_get_padding_width(wid) +
-           offset;
+    return textbox_get_font_width(tb) + widget_padding_get_padding_width(wid);
   }
   RofiDistance w = rofi_theme_get_distance(WIDGET(tb), "width", 0);
   int wi = distance_get_pixel(w, ROFI_ORIENTATION_HORIZONTAL);
@@ -957,7 +1033,7 @@ int textbox_get_desired_width(widget *wid, G_GNUC_UNUSED const int height) {
   int width = textbox_get_font_width(tb);
   // Restore.
   pango_layout_set_width(tb->layout, old_width);
-  return width + padding + offset;
+  return width + padding;
 }
 
 void textbox_set_ellipsize(textbox *tb, PangoEllipsizeMode mode) {
@@ -969,4 +1045,10 @@ void textbox_set_ellipsize(textbox *tb, PangoEllipsizeMode mode) {
       widget_queue_redraw(WIDGET(tb));
     }
   }
+}
+int textbox_get_cursor_x_pos(const textbox *tb) {
+  if (tb == NULL) {
+    return 0;
+  }
+  return tb->cursor_x_pos;
 }

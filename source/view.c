@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -38,6 +38,9 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef XCB_IMDKIT
+#include <xcb-imdkit/encoding.h>
+#endif
 #include <xcb/xcb_ewmh.h>
 #include <xcb/xcb_icccm.h>
 #include <xcb/xkb.h>
@@ -45,6 +48,7 @@
 
 #include <cairo-xcb.h>
 #include <cairo.h>
+#include <gio/gio.h>
 
 /** Indicated we understand the startup notification api is not yet stable.*/
 #define SN_API_NOT_YET_FROZEN
@@ -79,12 +83,31 @@ void rofi_view_update(RofiViewState *state, gboolean qr);
 
 static int rofi_view_calculate_height(RofiViewState *state);
 
+#ifdef XCB_IMDKIT
+static void xim_commit_string(xcb_xim_t *im, G_GNUC_UNUSED xcb_xic_t ic,
+                              G_GNUC_UNUSED uint32_t flag, char *str,
+                              uint32_t length, G_GNUC_UNUSED uint32_t *keysym,
+                              G_GNUC_UNUSED size_t nKeySym,
+                              G_GNUC_UNUSED void *user_data);
+static void xim_disconnected(G_GNUC_UNUSED xcb_xim_t *im,
+                             G_GNUC_UNUSED void *user_data);
+xcb_xim_im_callback xim_callback = {.forward_event =
+                                        x11_event_handler_fowarding,
+                                    .commit_string = xim_commit_string,
+                                    .disconnected = xim_disconnected};
+#endif
+
 /** Thread pool used for filtering */
 GThreadPool *tpool = NULL;
 
 /** Global pointer to the currently active RofiViewState */
 RofiViewState *current_active_menu = NULL;
 
+
+typedef struct {
+  char *string;
+  int index;
+} EntryHistoryIndex;
 /**
  * Structure holding cached state.
  */
@@ -113,7 +136,14 @@ struct {
   guint idle_timeout;
   /** timeout for reloading */
   guint refilter_timeout;
+  /** amount of time refiltering delay got reset */
   guint refilter_timeout_count;
+
+  /** if filtering takes longer then this time,
+   * reduce the amount of refilters. */
+  double max_refilter_time;
+  /** enable the reduced refilter mode. */
+  gboolean delayed_mode;
   /** timeout handling */
   guint user_timeout;
   /** debug counter for redraws */
@@ -124,6 +154,11 @@ struct {
   gboolean fullscreen;
   /** Cursor type */
   X11CursorType cursor_type;
+  /** Entry box */
+  gboolean entry_history_enable;
+  EntryHistoryIndex *entry_history;
+  gssize entry_history_length;
+  gssize entry_history_index;
 } CacheState = {
     .main_window = XCB_WINDOW_NONE,
     .fake_bg = NULL,
@@ -135,10 +170,16 @@ struct {
     .idle_timeout = 0,
     .refilter_timeout = 0,
     .refilter_timeout_count = 0,
+    .max_refilter_time = 0.0,
+    .delayed_mode = FALSE,
     .user_timeout = 0,
     .count = 0L,
     .repaint_source = 0,
     .fullscreen = FALSE,
+    .entry_history_enable = TRUE,
+    .entry_history = NULL,
+    .entry_history_length = 0,
+    .entry_history_index  = 0
 };
 
 void rofi_view_get_current_monitor(int *width, int *height) {
@@ -199,7 +240,7 @@ void rofi_capture_screenshot(void) {
   if (outp == NULL) {
     int index = 0;
     fpath = g_build_filename(xdg_pict_dir, filename, NULL);
-    while (g_file_test(fpath, G_FILE_TEST_EXISTS) && index < 99) {
+    while (g_file_test(fpath, G_FILE_TEST_EXISTS) && index < 99999) {
       g_free(fpath);
       g_free(filename);
       // Try the next index.
@@ -275,6 +316,7 @@ static gboolean rofi_view_repaint(G_GNUC_UNUSED void *data) {
     // After a resize the edit_pixmap surface might not contain anything
     // anymore. If we already re-painted, this does nothing.
 
+    TICK_N("Update start");
     rofi_view_update(current_active_menu, FALSE);
     g_debug("expose event");
     TICK_N("Expose");
@@ -314,19 +356,8 @@ static const int loc_transtable[9] = {
 static void rofi_view_calculate_window_position(RofiViewState *state) {
   int location = rofi_theme_get_position(WIDGET(state->main_window), "location",
                                          loc_transtable[config.location]);
-  int anchor = location;
-  if (!listview_get_fixed_num_lines(state->list_view)) {
-    anchor = location;
-    if (location == WL_CENTER) {
-      anchor = WL_NORTH;
-    } else if (location == WL_EAST) {
-      anchor = WL_NORTH_EAST;
-    } else if (location == WL_WEST) {
-      anchor = WL_NORTH_WEST;
-    }
-  }
-  anchor =
-      rofi_theme_get_position(WIDGET(state->main_window), "anchor", anchor);
+  int anchor =
+      rofi_theme_get_position(WIDGET(state->main_window), "anchor", location);
 
   if (CacheState.fullscreen) {
     state->x = CacheState.mon.x;
@@ -438,14 +469,38 @@ static void rofi_view_window_update_size(RofiViewState *state) {
   widget_resize(WIDGET(state->main_window), state->width, state->height);
 }
 
+extern GList *list_of_warning_msgs;
 static void rofi_view_reload_message_bar(RofiViewState *state) {
   if (state->mesg_box == NULL) {
     return;
   }
   char *msg = mode_get_message(state->sw);
-  if (msg) {
-    textbox_text(state->mesg_tb, msg);
+  if (msg || list_of_warning_msgs) {
+    /** we want to popin warning here. */
+
+    GString *emesg = g_string_new(msg);
+    if (list_of_warning_msgs) {
+      if (msg) {
+        g_string_append_c(emesg, '\n');
+      }
+      g_string_append(
+          emesg, "The following warnings were detected when starting rofi:\n");
+      GList *iter = g_list_first(list_of_warning_msgs);
+      int index = 0;
+      for (; iter != NULL && index < 2; iter = g_list_next(iter)) {
+        GString *msg = (GString *)(iter->data);
+        g_string_append(emesg, "\n\n");
+        g_string_append(emesg, msg->str);
+        index++;
+      }
+      if (g_list_length(iter) > 1) {
+        g_string_append_printf(emesg, "\nThere are <b>%u</b> more errors.",
+                               g_list_length(iter) - 1);
+      }
+    }
+    textbox_text(state->mesg_tb, emesg->str);
     widget_enable(WIDGET(state->mesg_box));
+    g_string_free(emesg, TRUE);
     g_free(msg);
   } else {
     widget_disable(WIDGET(state->mesg_box));
@@ -515,7 +570,7 @@ void rofi_view_reload(void) {
   // @TODO add check if current view is equal to the callee
   if (CacheState.idle_timeout == 0) {
     CacheState.idle_timeout =
-        g_timeout_add(1000 / 10, rofi_view_reload_idle, NULL);
+        g_timeout_add(1000 / 100, rofi_view_reload_idle, NULL);
   }
 }
 void rofi_view_queue_redraw(void) {
@@ -765,7 +820,171 @@ rofi_view_setup_fake_transparency(widget *win,
     TICK_N("Fake transparency");
   }
 }
+
+#ifdef XCB_IMDKIT
+static void xim_commit_string(xcb_xim_t *im, G_GNUC_UNUSED xcb_xic_t ic,
+                              G_GNUC_UNUSED uint32_t flag, char *str,
+                              uint32_t length, G_GNUC_UNUSED uint32_t *keysym,
+                              G_GNUC_UNUSED size_t nKeySym,
+                              G_GNUC_UNUSED void *user_data) {
+  RofiViewState *state = rofi_view_get_active();
+  if (state == NULL) {
+    return;
+  }
+
+#ifndef XCB_IMDKIT_1_0_3_LOWER
+  if (xcb_xim_get_encoding(im) == XCB_XIM_UTF8_STRING) {
+    rofi_view_handle_text(state, str);
+  } else if (xcb_xim_get_encoding(im) == XCB_XIM_COMPOUND_TEXT) {
+    size_t newLength = 0;
+    char *utf8 = xcb_compound_text_to_utf8(str, length, &newLength);
+    if (utf8) {
+      rofi_view_handle_text(state, utf8);
+    }
+  }
+#else
+  size_t newLength = 0;
+  char *utf8 = xcb_compound_text_to_utf8(str, length, &newLength);
+  if (utf8) {
+    rofi_view_handle_text(state, utf8);
+  }
+#endif
+}
+
+static void xim_disconnected(G_GNUC_UNUSED xcb_xim_t *im,
+                             G_GNUC_UNUSED void *user_data) {
+  xcb->ic = 0;
+}
+
+static void create_ic_callback(xcb_xim_t *im, xcb_xic_t new_ic,
+                               G_GNUC_UNUSED void *user_data) {
+  xcb->ic = new_ic;
+  if (xcb->ic) {
+    xcb_xim_set_ic_focus(im, xcb->ic);
+  }
+}
+
+gboolean rofi_set_im_window_pos(int new_x, int new_y) {
+  if (!xcb->ic)
+    return false;
+
+  static xcb_point_t spot = {.x = 0, .y = 0};
+  if (spot.x != new_x || spot.y != new_y) {
+    spot.x = new_x;
+    spot.y = new_y;
+    xcb_xim_nested_list nested = xcb_xim_create_nested_list(
+        xcb->im, XCB_XIM_XNSpotLocation, &spot, NULL);
+    xcb_xim_set_ic_values(xcb->im, xcb->ic, NULL, NULL, XCB_XIM_XNClientWindow,
+                          &CacheState.main_window, XCB_XIM_XNFocusWindow,
+                          &CacheState.main_window, XCB_XIM_XNPreeditAttributes,
+                          &nested, NULL);
+    free(nested.data);
+  }
+  return true;
+}
+static void open_xim_callback(xcb_xim_t *im, G_GNUC_UNUSED void *user_data) {
+  RofiViewState *state = rofi_view_get_active();
+  uint32_t input_style = XCB_IM_PreeditPosition | XCB_IM_StatusArea;
+  xcb_point_t spot;
+  spot.x = widget_get_x_pos(&state->text->widget) +
+           textbox_get_cursor_x_pos(state->text);
+  spot.y = widget_get_y_pos(&state->text->widget) +
+           widget_get_height(&state->text->widget);
+  xcb_xim_nested_list nested =
+      xcb_xim_create_nested_list(im, XCB_XIM_XNSpotLocation, &spot, NULL);
+  xcb_xim_create_ic(
+      im, create_ic_callback, NULL, XCB_XIM_XNInputStyle, &input_style,
+      XCB_XIM_XNClientWindow, &CacheState.main_window, XCB_XIM_XNFocusWindow,
+      &CacheState.main_window, XCB_XIM_XNPreeditAttributes, &nested, NULL);
+  free(nested.data);
+}
+#endif
+
+static void input_history_initialize ( void )
+{
+  if ( CacheState.entry_history_enable == FALSE ) {
+    return;
+  }
+  CacheState.entry_history = NULL;
+  CacheState.entry_history_index  = 0;
+  CacheState.entry_history_length = 0;
+
+  gchar *path = g_build_filename(cache_dir, "rofi-entry-history.txt", NULL);
+  if ( g_file_test(path, G_FILE_TEST_EXISTS ) ) {
+    FILE *fp = fopen(path, "r");
+    if ( fp ) {
+      char *line = NULL;
+      size_t len = 0;
+      ssize_t nread;
+      while ((nread = getline(&line, &len, fp)) != -1) {
+        CacheState.entry_history = g_realloc(CacheState.entry_history,
+                                             sizeof(EntryHistoryIndex)*(CacheState.entry_history_length+1));
+        if ( line[nread-1] == '\n' ) {
+          line[nread-1] = '\0';
+          nread--;
+        }
+        CacheState.entry_history[CacheState.entry_history_length].string = g_strdup(line);
+        CacheState.entry_history[CacheState.entry_history_length].index  = strlen(line);
+        CacheState.entry_history_length++;
+        CacheState.entry_history_index++;
+      }
+      free(line);
+      fclose(fp);
+    }
+  }
+  g_free(path);
+  CacheState.entry_history = g_realloc(CacheState.entry_history,
+                                       sizeof(EntryHistoryIndex)*(CacheState.entry_history_length+1));
+  CacheState.entry_history[CacheState.entry_history_length].string = g_strdup("");
+  CacheState.entry_history[CacheState.entry_history_length].index  = 0;
+  CacheState.entry_history_length++;
+
+}
+static void input_history_save ( void )
+{
+  if ( CacheState.entry_history_enable == FALSE ) {
+    return;
+  }
+  if ( CacheState.entry_history_length > 0  ){
+    // History max.
+    int max_history = 20;
+    ThemeWidget *wid = rofi_config_find_widget("entry", NULL, TRUE);
+    if ( wid ) {
+      Property *p = rofi_theme_find_property(wid, P_INTEGER, "max-history", TRUE);
+      if ( p != NULL && p->type == P_INTEGER ){
+        max_history = p->value.i;
+      }
+    }
+    gchar *path = g_build_filename(cache_dir, "rofi-entry-history.txt", NULL);
+    g_debug("Entry filename output: '%s'", path);
+    FILE *fp = fopen(path, "w");
+    if ( fp ) {
+      gssize start = MAX(0, (CacheState.entry_history_length-max_history));
+      for ( gssize i = start; i < CacheState.entry_history_length;  i++){
+        if ( strlen(CacheState.entry_history[i].string) > 0 ){
+          fprintf(fp, "%s\n", CacheState.entry_history[i].string);
+        }
+      }
+      fclose(fp);
+    }
+    g_free(path);
+  }
+  // Cleanups.
+  if ( CacheState.entry_history != NULL ) {
+    g_free(CacheState.entry_history);
+    CacheState.entry_history = NULL;
+    CacheState.entry_history_length = 0;
+    CacheState.entry_history_index  = 0;
+  }
+}
+
 void __create_window(MenuFlags menu_flags) {
+  // In password mode, disable the entry history.
+  if ( (menu_flags&MENU_PASSWORD) == MENU_PASSWORD ) {
+    CacheState.entry_history_enable = FALSE;
+  }
+  input_history_initialize();
+
   uint32_t selmask = XCB_CW_BACK_PIXMAP | XCB_CW_BORDER_PIXEL |
                      XCB_CW_BIT_GRAVITY | XCB_CW_BACKING_STORE |
                      XCB_CW_EVENT_MASK | XCB_CW_COLORMAP;
@@ -780,6 +999,15 @@ void __create_window(MenuFlags menu_flags) {
                        XCB_GRAVITY_STATIC,   XCB_BACKING_STORE_NOT_USEFUL,
                        xcb_event_masks,      map};
 
+#ifdef XCB_IMDKIT
+  xcb_xim_set_im_callback(xcb->im, &xim_callback, NULL);
+#endif
+
+// Open connection to XIM server.
+#ifdef XCB_IMDKIT
+  xcb_xim_open(xcb->im, open_xim_callback, true, NULL);
+#endif
+
   xcb_window_t box_window = xcb_generate_id(xcb->connection);
   xcb_void_cookie_t cc = xcb_create_window_checked(
       xcb->connection, depth->depth, box_window, xcb_stuff_get_root_window(), 0,
@@ -791,6 +1019,7 @@ void __create_window(MenuFlags menu_flags) {
     g_error("xcb_create_window() failed error=0x%x\n", error->error_code);
     exit(EXIT_FAILURE);
   }
+
   TICK_N("xcb create window");
   CacheState.gc = xcb_generate_id(xcb->connection);
   xcb_create_gc(xcb->connection, CacheState.gc, box_window, 0, 0);
@@ -1018,7 +1247,34 @@ inline static void rofi_view_nav_last(RofiViewState *state) {
   // state->selected = state->filtered_lines - 1;
   listview_set_selected(state->list_view, -1);
 }
+static void selection_changed_callback(G_GNUC_UNUSED listview *lv,
+                                       unsigned int index, void *udata) {
+  RofiViewState *state = (RofiViewState *)udata;
+  if (state->tb_current_entry) {
+    if (index < state->filtered_lines) {
+      int fstate = 0;
+      char *text = mode_get_display_value(state->sw, state->line_map[index],
+                                          &fstate, NULL, TRUE);
+      textbox_text(state->tb_current_entry, text);
+      g_free(text);
 
+    } else {
+      textbox_text(state->tb_current_entry, "");
+    }
+  }
+  if (state->icon_current_entry) {
+    if (index < state->filtered_lines) {
+      int icon_height =
+          widget_get_desired_height(WIDGET(state->icon_current_entry),
+                                    WIDGET(state->icon_current_entry)->w);
+      cairo_surface_t *icon =
+          mode_get_icon(state->sw, state->line_map[index], icon_height);
+      icon_set_surface(state->icon_current_entry, icon);
+    } else {
+      icon_set_surface(state->icon_current_entry, NULL);
+    }
+  }
+}
 static void update_callback(textbox *t, icon *ico, unsigned int index,
                             void *udata, TextBoxFontType *type, gboolean full) {
   RofiViewState *state = (RofiViewState *)udata;
@@ -1028,39 +1284,44 @@ static void update_callback(textbox *t, icon *ico, unsigned int index,
     char *text = mode_get_display_value(state->sw, state->line_map[index],
                                         &fstate, &add_list, TRUE);
     (*type) |= fstate;
-    // TODO needed for markup.
-    textbox_font(t, *type);
-    // Move into list view.
-    textbox_text(t, text);
-    PangoAttrList *list = textbox_get_pango_attributes(t);
-    if (list != NULL) {
-      pango_attr_list_ref(list);
-    } else {
-      list = pango_attr_list_new();
-    }
+
     if (ico) {
       int icon_height = widget_get_desired_height(WIDGET(ico), WIDGET(ico)->w);
       cairo_surface_t *icon =
           mode_get_icon(state->sw, state->line_map[index], icon_height);
       icon_set_surface(ico, icon);
     }
+    if (t) {
+      // TODO needed for markup.
+      textbox_font(t, *type);
+      // Move into list view.
+      textbox_text(t, text);
+      PangoAttrList *list = textbox_get_pango_attributes(t);
+      if (list != NULL) {
+        pango_attr_list_ref(list);
+      } else {
+        list = pango_attr_list_new();
+      }
 
-    if (state->tokens) {
-      RofiHighlightColorStyle th = {ROFI_HL_BOLD | ROFI_HL_UNDERLINE,
-                                    {0.0, 0.0, 0.0, 0.0}};
-      th = rofi_theme_get_highlight(WIDGET(t), "highlight", th);
-      helper_token_match_get_pango_attr(th, state->tokens,
-                                        textbox_get_visible_text(t), list);
+      if (state->tokens) {
+        RofiHighlightColorStyle th = {ROFI_HL_BOLD | ROFI_HL_UNDERLINE,
+                                      {0.0, 0.0, 0.0, 0.0}};
+        th = rofi_theme_get_highlight(WIDGET(t), "highlight", th);
+        helper_token_match_get_pango_attr(th, state->tokens,
+                                          textbox_get_visible_text(t), list);
+      }
+      for (GList *iter = g_list_first(add_list); iter != NULL;
+           iter = g_list_next(iter)) {
+        pango_attr_list_insert(list, (PangoAttribute *)(iter->data));
+      }
+      textbox_set_pango_attributes(t, list);
+      pango_attr_list_unref(list);
     }
-    for (GList *iter = g_list_first(add_list); iter != NULL;
-         iter = g_list_next(iter)) {
-      pango_attr_list_insert(list, (PangoAttribute *)(iter->data));
-    }
-    textbox_set_pango_attributes(t, list);
-    pango_attr_list_unref(list);
+
     g_list_free(add_list);
     g_free(text);
   } else {
+    // Never called.
     int fstate = 0;
     mode_get_display_value(state->sw, state->line_map[index], &fstate, NULL,
                            FALSE);
@@ -1099,6 +1360,14 @@ void rofi_view_update(RofiViewState *state, gboolean qr) {
   cairo_set_operator(d, CAIRO_OPERATOR_OVER);
   widget_draw(WIDGET(state->main_window), d);
 
+#ifdef XCB_IMDKIT
+  int x = widget_get_x_pos(&state->text->widget) +
+          textbox_get_cursor_x_pos(state->text);
+  int y = widget_get_y_pos(&state->text->widget) +
+          widget_get_height(&state->text->widget);
+  rofi_set_im_window_pos(x, y);
+#endif
+
   TICK_N("widgets");
   cairo_surface_flush(CacheState.edit_surf);
   if (qr) {
@@ -1122,6 +1391,7 @@ static gboolean rofi_view_refilter_real(RofiViewState *state) {
   if (state->sw == NULL) {
     return G_SOURCE_REMOVE;
   }
+  GTimer *timer = g_timer_new();
   TICK_N("Filter start");
   if (state->reload) {
     _rofi_view_reload_row(state);
@@ -1200,6 +1470,10 @@ static gboolean rofi_view_refilter_real(RofiViewState *state) {
     // Cleanup + bookkeeping.
     state->filtered_lines = j;
     g_free(pattern);
+
+    double elapsed = g_timer_elapsed(timer, NULL);
+
+    CacheState.max_refilter_time = elapsed;
   } else {
     listview_set_filtered(state->list_view, FALSE);
     for (unsigned int i = 0; i < state->num_lines; i++) {
@@ -1242,6 +1516,8 @@ static gboolean rofi_view_refilter_real(RofiViewState *state) {
   state->refilter = FALSE;
   TICK_N("Filter done");
   rofi_view_update(state, TRUE);
+
+  g_timer_destroy(timer);
   return G_SOURCE_REMOVE;
 }
 static void rofi_view_refilter(RofiViewState *state) {
@@ -1251,12 +1527,26 @@ static void rofi_view_refilter(RofiViewState *state) {
     g_source_remove(CacheState.refilter_timeout);
     CacheState.refilter_timeout = 0;
   }
-  if (state->num_lines > config.refilter_timeout_limit &&
-      CacheState.refilter_timeout_count < 25 && state->text &&
-      strlen(state->text->text) > 0) {
+  if (CacheState.max_refilter_time > (config.refilter_timeout_limit / 1000.0) &&
+      state->text && strlen(state->text->text) > 0 &&
+      CacheState.refilter_timeout_count < 25) {
+    if (CacheState.delayed_mode == FALSE) {
+      g_warning(
+          "Filtering took %f seconds ( %f ), switching to delayed filter\n",
+          CacheState.max_refilter_time, config.refilter_timeout_limit / 1000.0);
+      CacheState.delayed_mode = TRUE;
+    }
     CacheState.refilter_timeout =
         g_timeout_add(200, (GSourceFunc)rofi_view_refilter_real, state);
   } else {
+    if (CacheState.delayed_mode == TRUE && state->text &&
+        strlen(state->text->text) > 0 &&
+        CacheState.refilter_timeout_count < 25) {
+      g_warning(
+          "Filtering took %f seconds , switching back to instant filter\n",
+          CacheState.max_refilter_time);
+      CacheState.delayed_mode = FALSE;
+    }
     rofi_view_refilter_real(state);
   }
 }
@@ -1285,7 +1575,18 @@ void rofi_view_finalize(RofiViewState *state) {
  * This function should be called when the input of the entry is changed.
  * TODO: Evaluate if this needs to be a 'signal' on textbox?
  */
-static void rofi_view_input_changed() { rofi_view_take_action("inputchange"); }
+static void rofi_view_input_changed() {
+  rofi_view_take_action("inputchange");
+
+  RofiViewState * state = current_active_menu;
+  if ( CacheState.entry_history_enable && state ) {
+    if ( CacheState.entry_history[CacheState.entry_history_index].string != NULL) {
+      g_free(CacheState.entry_history[CacheState.entry_history_index].string);
+    }
+    CacheState.entry_history[CacheState.entry_history_index].string = textbox_get_text(state->text);
+    CacheState.entry_history[CacheState.entry_history_index].index  = textbox_get_cursor(state->text);
+  }
+}
 
 static void rofi_view_trigger_global_action(KeyBindingAction action) {
   RofiViewState *state = rofi_view_get_active();
@@ -1303,6 +1604,21 @@ static void rofi_view_trigger_global_action(KeyBindingAction action) {
                           xcb->ewmh.UTF8_STRING, XCB_CURRENT_TIME);
     xcb_flush(xcb->connection);
     break;
+  case COPY_SECONDARY: {
+    char *data = NULL;
+    unsigned int selected = listview_get_selected(state->list_view);
+    if (selected < state->filtered_lines) {
+      data = mode_get_completion(state->sw, state->line_map[selected]);
+    } else if (state->text && state->text->text) {
+      data = g_strdup(state->text->text);
+    }
+    if (data) {
+      xcb_stuff_set_clipboard(data);
+      xcb_set_selection_owner(xcb->connection, CacheState.main_window,
+                              netatoms[CLIPBOARD], XCB_CURRENT_TIME);
+      xcb_flush(xcb->connection);
+    }
+  } break;
   case SCREENSHOT:
     rofi_capture_screenshot();
     break;
@@ -1525,6 +1841,44 @@ static void rofi_view_trigger_global_action(KeyBindingAction action) {
     state->quit = TRUE;
     break;
   }
+  case ENTRY_HISTORY_DOWN: {
+      if ( CacheState.entry_history_enable && state->text ) {
+        CacheState.entry_history[CacheState.entry_history_index].index = textbox_get_cursor(state->text);
+        if ( CacheState.entry_history_index  > 0 ) {
+          CacheState.entry_history_index--;
+        }
+        if ( state->text ) {
+          textbox_text(state->text, CacheState.entry_history[CacheState.entry_history_index].string);
+          textbox_cursor(state->text,CacheState.entry_history[CacheState.entry_history_index].index );
+          state->refilter = TRUE;
+        }
+      }
+    break;
+  }
+  case ENTRY_HISTORY_UP: {
+      if ( CacheState.entry_history_enable && state->text ) {
+        if ( CacheState.entry_history[CacheState.entry_history_index].string != NULL) {
+          g_free(CacheState.entry_history[CacheState.entry_history_index].string);
+        }
+        CacheState.entry_history[CacheState.entry_history_index].string = textbox_get_text(state->text);
+        CacheState.entry_history[CacheState.entry_history_index].index = textbox_get_cursor(state->text);
+        // Don't create up if current is empty.
+        if ( strlen(CacheState.entry_history[CacheState.entry_history_index].string) > 0 ) {
+          CacheState.entry_history_index++;
+          if ( CacheState.entry_history_index  >= CacheState.entry_history_length ) {
+            CacheState.entry_history = g_realloc(CacheState.entry_history,
+                                                 sizeof(EntryHistoryIndex)*(CacheState.entry_history_length+1));
+            CacheState.entry_history[CacheState.entry_history_length].string = g_strdup("");
+            CacheState.entry_history[CacheState.entry_history_length].index  = 0;
+            CacheState.entry_history_length++;
+          }
+        }
+        textbox_text(state->text, CacheState.entry_history[CacheState.entry_history_index].string);
+        textbox_cursor(state->text,CacheState.entry_history[CacheState.entry_history_index].index );
+        state->refilter = TRUE;
+      }
+    break;
+  }
   }
 }
 
@@ -1737,6 +2091,8 @@ void rofi_view_temp_click_to_exit(RofiViewState *state, xcb_window_t target) {
 
 void rofi_view_frame_callback(void) {
   if (CacheState.repaint_source == 0) {
+    CacheState.count++;
+    g_debug("redraw %llu", CacheState.count);
     CacheState.repaint_source =
         g_idle_add_full(G_PRIORITY_HIGH_IDLE, rofi_view_repaint, NULL, NULL);
   }
@@ -1759,7 +2115,7 @@ static int rofi_view_calculate_height(RofiViewState *state) {
   return widget_get_desired_height(main_window, state->width);
 }
 
-static WidgetTriggerActionResult textbox_button_trigger_action(
+WidgetTriggerActionResult textbox_button_trigger_action(
     widget *wid, MouseBindingMouseDefaultAction action, G_GNUC_UNUSED gint x,
     G_GNUC_UNUSED gint y, G_GNUC_UNUSED void *user_data) {
   RofiViewState *state = (RofiViewState *)user_data;
@@ -1883,6 +2239,16 @@ static void rofi_view_add_widget(RofiViewState *state, widget *parent_widget,
                        TB_AUTOWIDTH | TB_AUTOHEIGHT, NORMAL, "", 0, 0);
     box_add((box *)parent_widget, WIDGET(state->tb_filtered_rows), FALSE);
     defaults = NULL;
+  } else if (strcmp(name, "textbox-current-entry") == 0) {
+    state->tb_current_entry =
+        textbox_create(parent_widget, WIDGET_TYPE_TEXTBOX_TEXT, name,
+                       TB_MARKUP | TB_AUTOHEIGHT, NORMAL, "", 0, 0);
+    box_add((box *)parent_widget, WIDGET(state->tb_current_entry), FALSE);
+    defaults = NULL;
+  } else if (strcmp(name, "icon-current-entry") == 0) {
+    state->icon_current_entry = icon_create(parent_widget, name);
+    box_add((box *)parent_widget, WIDGET(state->icon_current_entry), FALSE);
+    defaults = NULL;
   }
   /**
    * CASE INDICATOR
@@ -1941,18 +2307,13 @@ static void rofi_view_add_widget(RofiViewState *state, widget *parent_widget,
     }
     state->list_view = listview_create(parent_widget, name, update_callback,
                                        state, config.element_height, 0);
+    listview_set_selection_changed_callback(
+        state->list_view, selection_changed_callback, (void *)state);
     box_add((box *)parent_widget, WIDGET(state->list_view), TRUE);
-    // Set configuration
-    listview_set_multi_select(state->list_view,
-                              (state->menu_flags & MENU_INDICATOR) ==
-                                  MENU_INDICATOR);
     listview_set_scroll_type(state->list_view, config.scroll_method);
     listview_set_mouse_activated_cb(
         state->list_view, rofi_view_listview_mouse_activated_cb, state);
 
-    int lines = rofi_theme_get_integer(WIDGET(state->list_view), "lines",
-                                       DEFAULT_MENU_LINES);
-    listview_set_num_lines(state->list_view, lines);
     listview_set_max_lines(state->list_view, state->num_lines);
   }
   /**
@@ -2184,6 +2545,8 @@ void rofi_view_hide(void) {
 }
 
 void rofi_view_cleanup() {
+  // Clear clipboard data.
+  xcb_stuff_set_clipboard(NULL);
   g_debug("Cleanup.");
   if (CacheState.idle_timeout > 0) {
     g_source_remove(CacheState.idle_timeout);
@@ -2228,6 +2591,8 @@ void rofi_view_cleanup() {
   }
   xcb_flush(xcb->connection);
   g_assert(g_queue_is_empty(&(CacheState.views)));
+
+  input_history_save();
 }
 void rofi_view_workers_initialize(void) {
   TICK_N("Setup Threadpool, start");
@@ -2285,8 +2650,9 @@ void rofi_view_clear_input(RofiViewState *state) {
   }
 }
 
-void rofi_view_ellipsize_start(RofiViewState *state) {
-  listview_set_ellipsize_start(state->list_view);
+void rofi_view_ellipsize_listview(RofiViewState *state,
+                                  PangoEllipsizeMode mode) {
+  listview_set_ellipsize(state->list_view, mode);
 }
 
 void rofi_view_switch_mode(RofiViewState *state, Mode *mode) {

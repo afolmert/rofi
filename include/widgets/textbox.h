@@ -63,7 +63,7 @@ typedef struct {
   unsigned long flags;
   short cursor;
   char *text;
-  const char *placeholder;
+  char *placeholder;
   int show_placeholder;
   PangoLayout *layout;
   int tbft;
@@ -75,6 +75,8 @@ typedef struct {
 
   double yalign;
   double xalign;
+
+  int cursor_x_pos;
 
   TBFontConfig *tbfc;
 
@@ -93,7 +95,6 @@ typedef enum {
   TB_MARKUP = 1 << 20,
   TB_WRAP = 1 << 21,
   TB_PASSWORD = 1 << 22,
-  TB_INDICATOR = 1 << 23,
 } TextboxFlags;
 /**
  * Flags indicating current state of the textbox.
@@ -312,6 +313,7 @@ PangoAttrList *textbox_get_pango_attributes(textbox *tb);
  * @returns the visible text.
  */
 const char *textbox_get_visible_text(const textbox *tb);
+
 /**
  * @param wid The handle to the textbox.
  * @param height The height we want the desired width for
@@ -320,7 +322,7 @@ const char *textbox_get_visible_text(const textbox *tb);
  *
  * @returns the desired width of the textbox.
  */
-int textbox_get_desired_width(widget *wid, const int height);
+int textbox_get_desired_width(widget *wid, G_GNUC_UNUSED const int height);
 
 /**
  * @param tb  Handle to the textbox
@@ -336,5 +338,26 @@ void textbox_cursor_end(textbox *tb);
  * Set the ellipsizing mode used on the string.
  */
 void textbox_set_ellipsize(textbox *tb, PangoEllipsizeMode mode);
+
+/**
+ * @param tb Handle to the textbox
+ *
+ * @returns the position of the cursor (0 if no cursor).
+ */
+int textbox_get_cursor_x_pos(const textbox *tb);
+
+/**
+ * @param tb Handle to the textbox
+ *
+ * @returns gets a newly allocated copy of the content of the entrybox.
+ */
+char *textbox_get_text ( const textbox *tb );
+
+/**
+ * @param tb Handle to the textbox
+ *
+ * @returns the position of the cursor. 
+ */
+int textbox_get_cursor ( const textbox *tb );
 /**@}*/
 #endif // ROFI_TEXTBOX_H

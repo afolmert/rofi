@@ -6,8 +6,9 @@
 
 .SH DESCRIPTION
 .PP
-\fBrofi\fP supports modes that use simple scripts in the background to generate a list and process the result from user
-actions.  This provide a simple interface to make simple extensions to rofi.
+\fBrofi\fP supports modes that use simple scripts in the background to generate a
+list and process the result from user actions.  This provide a simple interface
+to make simple extensions to rofi.
 
 .SH USAGE
 .PP
@@ -30,10 +31,11 @@ The name should be unique.
 
 .SH API
 .PP
-Rofi calls the executable without arguments on startup.  This should generate a list of options, separated by a newline
-(\fB\fC\\n\fR) (This can be changed by the script).
-If the user selects an option, rofi calls the executable with the text of that option as the first argument.
-If the script returns no entries, rofi quits.
+Rofi calls the executable without arguments on startup.  This should generate a
+list of options, separated by a newline (\fB\fC\\n\fR) (This can be changed by the
+script). If the user selects an option, rofi calls the executable with the text
+of that option as the first argument. If the script returns no entries, rofi
+quits.
 
 .PP
 A simple script would be:
@@ -124,7 +126,13 @@ The following extra options exists:
 .IP \(bu 2
 \fBuse-hot-keys\fP: If set to true, it enabled the Custom keybindings for script. Warning this breaks the normal rofi flow.
 .IP \(bu 2
+\fBkeep-selection\fP: If set, the selection is not moved to the first entry, but the current position is maintained. The filter is cleared.
+.IP \(bu 2
+\fBnew-selection\fP: If \fB\fCkeep-selection\fR is set, this allows you to override the selected entry (absolute position).
+.IP \(bu 2
 \fBdata\fP:         Passed data to the next execution of the script via \fBROFI_DATA\fP\&.
+.IP \(bu 2
+\fBtheme\fP:       Small theme snippet to f.e. change the background color of a widget.
 
 .RE
 
@@ -157,6 +165,10 @@ The following options are supported:
 \fBnonselectable\fP: If true the row cannot activated.
 .IP \(bu 2
 \fBinfo\fP: Info that, on selection, gets placed in the \fB\fCROFI_INFO\fR environment variable. This entry does not get searched.
+.IP \(bu 2
+\fBurgent\fP: Set urgent flag on entry (true/false)
+.IP \(bu 2
+\fBactive\fP: Set active flag on entry (true/false)
 
 .RE
 

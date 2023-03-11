@@ -5,7 +5,7 @@ runs:
   using: composite
   steps:
     - id: python
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v4
       with:
         python-version: '3.x'
     - id: apt
@@ -29,6 +29,7 @@ runs:
           libxcb-xkb-dev \
           libxcb-xrm-dev \
           libxcb-cursor-dev \
+          libxcb-imdkit-dev \
           libxkbcommon-dev \
           libxkbcommon-dev \
           libxkbcommon-x11-dev \
@@ -44,7 +45,7 @@ runs:
           xutils-dev
       shell: bash
     - id: doxy
-      run: git clone https://github.com/alobbs/doxy-coverage
+      run: git clone https://github.com/davatorium/doxy-coverage
       shell: bash
     - id: check
       run: |

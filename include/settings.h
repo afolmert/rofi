@@ -2,7 +2,7 @@
  * rofi
  *
  * MIT/X11 License
- * Copyright © 2013-2022 Qball Cow <qball@gmpclient.org>
+ * Copyright © 2013-2023 Qball Cow <qball@gmpclient.org>
  *
  * Permission is hereby granted, free of charge, to any person obtaining
  * a copy of this software and associated documentation files (the
@@ -181,6 +181,9 @@ typedef struct {
   /** refilter timeout limit, when more then these entries,go into timeout mode.
    */
   unsigned int refilter_timeout_limit;
+
+  /** workaround for broken xserver (#300 on xserver, #611) */
+  gboolean xserver_i300_workaround;
 } Settings;
 
 /** Default number of lines in the list view */
